@@ -71,3 +71,66 @@ def anonymize_promo_sheet(sheet_name: str) -> str:
     so we normalize before lookup."""
     key = sheet_name.strip().rstrip(",")
     return PROMO_SHEET_MAP.get(key, anonymize(key))
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Display labels for raw codes — used by the frontend
+# ────────────────────────────────────────────────────────────────────────────
+
+SUB_CHANNEL_LABELS: dict[str, str] = {
+    "GROCERY":                 "Off-trade grocery",
+    "FREE TRADE CMBC":         "B2B distributor",
+    "NATIONAL ON TRADE":       "National on-trade",
+    "FREE TRADE":              "Independent on-trade",
+    "CONVENIENCE & WHOLESALE": "Convenience & wholesale",
+    "MDD COPACKING":           "Co-packing",
+}
+
+SALES_CHANNEL_LABELS: dict[str, str] = {
+    "ON TRADE":         "On-trade",
+    "OFF TRADE":        "Off-trade",
+    "MDD CO-PACKING":   "Co-packing",
+}
+
+SPANISH_MONTHS: dict[str, str] = {
+    "Ene": "January",  "Feb": "February", "Mar": "March",   "Abr": "April",
+    "May": "May",      "Jun": "June",     "Jul": "July",    "Ago": "August",
+    "Sep": "September","Oct": "October",  "Nov": "November","Dic": "December",
+}
+
+
+def sub_channel_label(raw: str | None) -> str:
+    """`GROCERY` → `Off-trade grocery`. Unknown values pass through."""
+    if not raw:
+        return "Unknown"
+    return SUB_CHANNEL_LABELS.get(raw.strip(), raw.strip())
+
+
+def sales_channel_label(raw: str | None) -> str:
+    if not raw:
+        return "Unknown"
+    return SALES_CHANNEL_LABELS.get(raw.strip(), raw.strip())
+
+
+def period_label(period: str | None) -> str:
+    """`Nov.26` → `November 2026`. `2026-11-01` → `November 2026`."""
+    if not period:
+        return ""
+    p = str(period).strip()
+    # `Nov.26` format
+    if "." in p and len(p.split(".")) == 2:
+        m, y = p.split(".")
+        m3 = m[:3]
+        if m3 in SPANISH_MONTHS and y.isdigit():
+            year = 2000 + int(y) if int(y) < 100 else int(y)
+            return f"{SPANISH_MONTHS[m3]} {year}"
+    # ISO date YYYY-MM-DD or YYYY-MM
+    if "-" in p:
+        parts = p.split("-")
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+            year, month = int(parts[0]), int(parts[1])
+            months = ["January","February","March","April","May","June",
+                      "July","August","September","October","November","December"]
+            if 1 <= month <= 12:
+                return f"{months[month-1]} {year}"
+    return p

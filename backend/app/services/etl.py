@@ -156,7 +156,7 @@ def load_materials() -> pl.DataFrame:
     df = pl.read_excel(SALES_XLSX, sheet_name="MaterialData")
     keep = [c for c in df.columns if not c.startswith("Unnamed")]
     df = df.select(keep)
-    return df.with_columns(
+    out = df.with_columns(
         pl.col("Cod. Material").cast(pl.String).str.strip_chars().alias("material_id"),
     ).select(
         "material_id",
@@ -168,6 +168,55 @@ def load_materials() -> pl.DataFrame:
         pl.col("ALC. %").alias("alc_pct"),
         pl.col("L por SKU").alias("litres_per_sku"),
     ).unique(subset=["material_id"], keep="first")
+
+    # Construct a human-readable label per SKU.
+    # Format: "Estrella Damm · 330ml Can" — much friendlier than "EX23SRAN".
+    # Falls back gracefully when fields are missing.
+    def _title_case_brand(b: str | None) -> str:
+        if not b: return "(unknown brand)"
+        words = b.lower().split()
+        return " ".join(w.capitalize() for w in words)
+
+    out = out.with_columns(
+        label=pl.struct(["brand", "pack_size", "pack_type"]).map_elements(
+            lambda s: _build_sku_label(s["brand"], s["pack_size"], s["pack_type"]),
+            return_dtype=pl.String,
+        ),
+    )
+    return out
+
+
+def _build_sku_label(brand: str | None, pack_size: str | None, pack_type: str | None) -> str:
+    """Compose a friendly SKU label: 'Estrella Damm · 330ml Can'.
+
+    Token-dedupe approach: lowercase pack_size + pack_type, split into
+    tokens, keep only the first occurrence of each. Then re-case sensibly.
+    Examples:
+      '660ML NR' + 'NR BOTTLE'  → '660ml nr bottle'
+      '50L KEG'  + 'KEG'        → '50l keg'
+      '330ML CAN' + 'CAN'       → '330ml can'
+      '1/3 SR.'  + 'CAN'        → '1/3 sr. can'
+    """
+    brand_label = (
+        " ".join(w.capitalize() for w in brand.lower().split())
+        if brand else "Unknown brand"
+    )
+    raw_tokens: list[str] = []
+    for src in (pack_size, pack_type):
+        if not src or src == "Dummy":
+            continue
+        raw_tokens.extend(src.strip().lower().split())
+    # Preserve order, dedupe consecutive repeats and global repeats
+    seen: set[str] = set()
+    pack_tokens: list[str] = []
+    for t in raw_tokens:
+        if t and t not in seen:
+            pack_tokens.append(t)
+            seen.add(t)
+    parts = [brand_label]
+    if pack_tokens:
+        parts.append(" ".join(pack_tokens))
+    return " · ".join(parts)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -787,13 +836,17 @@ def write_meta(monthly: pl.DataFrame) -> None:
     brands = sorted(monthly["brand"].drop_nulls().unique().to_list())
     sub_channels = sorted(monthly["sub_channel"].drop_nulls().unique().to_list())
     sales_channels = sorted(monthly["sales_channel"].drop_nulls().unique().to_list())
+    # Pull SKU labels from a fresh MaterialData load (they aren't in the monthly aggregate)
+    mat = load_materials().select(["material_id", "label"])
     skus = (
         monthly.group_by("material_id")
         .agg(pl.col("brand").first(), pl.col("Hl").sum().alias("total_hl"))
         .sort("total_hl", descending=True)
+        .join(mat, on="material_id", how="left")
+        .with_columns(label=pl.coalesce(["label", "material_id"]))
         .select(
             pl.col("material_id").alias("id"),
-            pl.col("material_id").alias("label"),
+            "label",
             "brand",
         )
         .to_dicts()
@@ -814,9 +867,21 @@ def write_meta(monthly: pl.DataFrame) -> None:
         "brand": top_brand, "sub_channel": "GROCERY", "period": period_strings[-1],
     }
 
+    # Add human-readable channel labels via anonymize layer
+    from app.services.anonymize import sub_channel_label, sales_channel_label
+    sub_channels_labeled = [
+        {"code": s, "label": sub_channel_label(s)} for s in sub_channels
+    ]
+    sales_channels_labeled = [
+        {"code": s, "label": sales_channel_label(s)} for s in sales_channels
+    ]
+
     meta = {
         "brands": brands, "skus": skus,
-        "sub_channels": sub_channels, "sales_channels": sales_channels,
+        "sub_channels": sub_channels,                       # raw codes (back-compat)
+        "sub_channels_labeled": sub_channels_labeled,       # [{code, label}]
+        "sales_channels": sales_channels,
+        "sales_channels_labeled": sales_channels_labeled,
         "period_range": [period_strings[0], period_strings[-1]],
         "n_months": len(periods), "n_skus": len(skus),
         "hero": hero,

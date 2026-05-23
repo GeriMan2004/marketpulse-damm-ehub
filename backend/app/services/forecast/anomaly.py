@@ -62,9 +62,14 @@ def main() -> int:
             continue
         resid = stl.resid
         mad = float(median_abs_deviation(resid, scale="normal"))
-        if mad == 0:
+        # Guard against near-zero MAD (sparse/constant series produce
+        # astronomical z-scores). If MAD < 1 Hl, the series is too flat
+        # to flag anything meaningful.
+        if mad < 1.0:
             continue
         z = resid / mad
+        # Cap to [-10, 10] — anything beyond is numerical noise, not signal
+        z = np.clip(z, -10.0, 10.0)
         for i, zi in enumerate(z):
             if abs(zi) > 2.5:
                 row = series.row(i, named=True)

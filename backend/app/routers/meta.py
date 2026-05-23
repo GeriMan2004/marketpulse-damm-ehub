@@ -29,7 +29,9 @@ def get_meta() -> MetaResponse:
         brands=m["brands"],
         skus=m["skus"],
         sub_channels=m["sub_channels"],
+        sub_channels_labeled=m.get("sub_channels_labeled", []),
         sales_channels=m["sales_channels"],
+        sales_channels_labeled=m.get("sales_channels_labeled", []),
         period_range=tuple(m["period_range"]),
         hero=m["hero"],
     )

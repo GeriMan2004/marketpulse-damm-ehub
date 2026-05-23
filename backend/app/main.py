@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import (
+    anomalies,
     chat,
     debug_data,
     drivers,
@@ -22,6 +23,7 @@ from app.routers import (
     meta,
     promos,
     recommend,
+    sankey,
     simulate,
 )
 
@@ -61,6 +63,8 @@ app.include_router(recommend.router)
 app.include_router(chat.router)
 app.include_router(explain_view.router)
 app.include_router(debug_data.router)
+app.include_router(anomalies.router)
+app.include_router(sankey.router)
 
 
 @app.get("/", include_in_schema=False)
