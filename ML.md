@@ -331,5 +331,5 @@ Numbers filled at H10 from the 3-fold rolling CV on Oct/Nov/Dec 2025.
 - [ ] All forecasts + intervals snapshotted to `backend/app/data/snapshots/forecast.parquet`
 - [ ] Anomaly events written to `snapshots/anomalies.parquet`
 - [ ] Promo causal results written to `snapshots/promo_roi.parquet`
-- [ ] Simulator function passes a sanity test (10% off-invoice on `K015600 × GROCERY` shrinks the November gap)
+- [ ] Simulator function passes a sanity test (10% off-invoice on `EX23SRAN × GROCERY` shrinks the November gap)
 - [ ] MAPE table renders on `/forecast` page

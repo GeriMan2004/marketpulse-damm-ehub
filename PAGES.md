@@ -9,7 +9,7 @@ Every page reads the same topbar filters. **The "channel" filter maps to `CUSTOM
 | URL param | Meaning | Type | Example | Multi? |
 |---|---|---|---|---|
 | `brand` | `MaterialData.Marca` | str | `ESTRELLA+DAMM` | no (single brand) |
-| `sku` | `MaterialData.Cod. Material` (first token) | str | `K015600` | no |
+| `sku` | `MaterialData.Cod. Material` (first token) | str | `EX23SRAN` | no |
 | `sub_channel` | `CUSTOMERS.SubChannel` | enum | `GROCERY` | no |
 | `from` | period start (inclusive) | `YYYY-MM` | `2025-10` | no |
 | `to` | period end (inclusive) | `YYYY-MM` | `2026-12` | no |

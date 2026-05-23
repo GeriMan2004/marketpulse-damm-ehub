@@ -18,7 +18,7 @@ async def chat(req: ChatRequest):
         await asyncio.sleep(0.3)
         yield {"event": "tool_call", "data": json.dumps({
             "name": "compare_vs_budget",
-            "args": {"sku": "K015600", "sub_channel": "GROCERY", "period": "Nov.26"},
+            "args": {"sku": "EX23SRAN", "sub_channel": "GROCERY", "period": "Nov.26"},
         })}
         await asyncio.sleep(0.3)
         yield {"event": "tool_result", "data": json.dumps({

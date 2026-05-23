@@ -112,7 +112,7 @@ Everyone converges H22–H24 on the demo SKU narrative.
 - Parse `Abr.25`-style periods → month-start dates
 - Extract numeric IDs: `Cod. Cliente` → last segment; `Cod. Material` → first token
 - Filter `Pais == "Reino Unido"`, expect ~191/219 customers to join, ~25,389/25,714 rows
-- **Split actuals/budget rows** (`is_actual = Hl.notna() & Hl > 0`); 5,419 budget rows → `budgets.parquet`
+- **Drop null-Hl rows** — they're accounting noise, not a budget plan (audit finding, see [DECISIONS.md D-008](DECISIONS.md)). 5,487 dropped.
 - **Net negative Hl** (returns) per `(cliente, material, month)` before training
 - Run anonymization per [DATA.md §5](DATA.md): retailer names → `Grocer A-E`, pubs → `Pubco A-D`, etc. Deterministic via `PYTHONHASHSEED=42`
 - **5 bespoke promo parsers** for Tesco / Sainsbury's / Waitrose / Morrisons / Asda (each sheet has a different layout) → one `promos.parquet`. Allocate ~2h to this specifically — it's the hardest ETL.
@@ -141,7 +141,7 @@ Everyone converges H22–H24 on the demo SKU narrative.
 
 **Backend engineer:**
 - Wire `/api/forecast` and `/api/gap` to the forecast service (returns from `snapshots/forecast.parquet`)
-- **Exit:** `GET /api/forecast?sku=K015600&sub_channel=GROCERY&granularity=month` returns real points with intervals.
+- **Exit:** `GET /api/forecast?sku=EX23SRAN&sub_channel=GROCERY&granularity=month` returns real points with intervals.
 
 ### H10–H13 · Analysis layers (ML) · simulator & agent (backend)
 **ML engineer:**

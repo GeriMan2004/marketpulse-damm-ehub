@@ -146,9 +146,9 @@ Every tool returns a **Pydantic model**, never a free-form string. The agent the
 These anchor the LLM by showing concrete shape + units. They live in `backend/app/services/agent_examples.py` and are appended to the system prompt as `# Tool output examples` for one-shot grounding.
 
 ```python
-# forecast("K015600", "GROCERY", 3)
+# forecast("EX23SRAN", "GROCERY", 3)
 {
-  "sku": "K015600", "sub_channel": "GROCERY", "granularity": "month",
+  "sku": "EX23SRAN", "sub_channel": "GROCERY", "granularity": "month",
   "points": [
     {"period":"Sep.26","period_start":"2026-09-01","point":3812.0,"lo80":3401.0,"hi80":4255.0,"lo95":3180.0,"hi95":4501.0,"is_actual":false},
     {"period":"Oct.26","period_start":"2026-10-01","point":3550.0,"lo80":3180.0,"hi80":3961.0,"lo95":2972.0,"hi95":4189.0,"is_actual":false},
@@ -156,12 +156,12 @@ These anchor the LLM by showing concrete shape + units. They live in `backend/ap
   ]
 }
 
-# compare_vs_budget("K015600", "GROCERY", "Nov.26")
-{"sku":"K015600","sub_channel":"GROCERY","period":"Nov.26",
+# compare_vs_budget("EX23SRAN", "GROCERY", "Nov.26")
+{"sku":"EX23SRAN","sub_channel":"GROCERY","period":"Nov.26",
  "forecast_hl":3942.0,"budget_hl":4112.0,
  "gap_hl":-170.0,"gap_pct":-0.0413,"confidence":"medium"}
 
-# explain_gap("K015600", "GROCERY", "Nov.26", 3)
+# explain_gap("EX23SRAN", "GROCERY", "Nov.26", 3)
 [
   {"feature":"Promo coverage weeks 47-48","shap_value":-92.4,"direction":"negative",
    "explanation":"Planned multi-pack promo is shorter than the 2024 equivalent, removing ~92 Hl of expected lift."},
@@ -181,7 +181,7 @@ These anchor the LLM by showing concrete shape + units. They live in `backend/ap
    "estimated_cost":4200.0,"roi":1.68,"n_observations":4,"confidence":"medium"}
 ]
 
-# simulate_promo("K015600", "GROCERY", ["Nov.26"], 10.0, "multi-pack")
+# simulate_promo("EX23SRAN", "GROCERY", ["Nov.26"], 10.0, "multi-pack")
 {"baseline":{...as forecast above...},
  "simulated":{...with promo_active=1 on Nov.26...},
  "gap_before_hl":-170.0,"gap_after_hl":-55.0,"gap_closed_pct":0.676,

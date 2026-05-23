@@ -13,8 +13,9 @@ A tool that forecasts UK sales, detects deviations vs. budget, and recommends co
 - **[FRONTEND.md](FRONTEND.md)** — React build guide (shadcn + Magic UI + Tremor, flat aesthetic)
 - **[PLAN.md](PLAN.md)** — 24h execution plan, role split, risks, done checklist
 - **[DEMO.md](DEMO.md)** — 5-min hero narrative + judge Q&A + safety net
-- **[Makefile](Makefile)** — every `make <target>` documented (install, data, train, demo, snapshot, doctor, types, clean)
-- **[.env.example](.env.example)** — required env vars (HF_TOKEN, MONGO_URI, PYTHONHASHSEED)
+- **[DECISIONS.md](DECISIONS.md)** — drift log: every place implementation diverged from the plan and why
+- **[Makefile](Makefile)** — every `make <target>` documented (install, data, train, demo, doctor, types, clean)
+- **[.env.example](.env.example)** — required env vars (HF_TOKEN; optional Mongo + log level)
 
 ## 🎯 One-line pitch
 

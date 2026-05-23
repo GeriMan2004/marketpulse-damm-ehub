@@ -16,10 +16,10 @@ def get_gap(
 ) -> list[GapItem]:
     """Mock gap rows. Real impl joins forecast vs budget snapshots."""
     items = [
-        GapItem(sku="K015600", sub_channel="GROCERY", period="Nov.26",
+        GapItem(sku="EX23SRAN", sub_channel="GROCERY", period="Nov.26",
                 forecast_hl=3942, budget_hl=4112, gap_hl=-170, gap_pct=-0.0413,
                 confidence="medium"),
-        GapItem(sku="K015600", sub_channel="GROCERY", period="Oct.26",
+        GapItem(sku="EX23SRAN", sub_channel="GROCERY", period="Oct.26",
                 forecast_hl=3550, budget_hl=3680, gap_hl=-130, gap_pct=-0.0353,
                 confidence="medium"),
         GapItem(sku="K014800", sub_channel="GROCERY", period="Nov.26",
