@@ -45,6 +45,20 @@ CONSTRAINTS:
 - Be specific. Vague answers are useless to a commercial director.
 - Cite numbers from the data provided. Do not invent figures.
 
+REALISTIC RANGES (hard caps):
+- total_expected_gap_closed_pct MUST be in [0.0, 1.2]. 1.0 means "fully closes
+  the gap", 1.2 means "closes the gap and over-shoots target by 20%".
+  If your actions would close more, cap at 1.2 and mention the over-shoot
+  explicitly in risk_notes.
+- expected_gap_closed_pct per action: [0.0, 1.0].
+- expected_lift_hl per action: realistic vs the gap and historical promo lift
+  data. Don't claim 10x the SKU's monthly forecast.
+
+WRITING STYLE:
+- Action sentences: max 12 words, imperative, no "we should". Just say what to do.
+- Evidence: max 2 bullets per action, 80 chars each, cite concrete numbers.
+- Headlines: max 10 words.
+
 OUTPUT FORMAT (strict JSON, no markdown):
 {
   "scenarios": [
@@ -150,7 +164,6 @@ def post_recommend(req: RecommendRequest) -> RecommendationResponse:
             max_tokens=1500,
         )
         text = resp.choices[0].message.content or ""
-        # Extract JSON from the response (strip markdown fences if present)
         text = text.strip()
         if text.startswith("```"):
             text = text.split("```", 2)[1]
@@ -158,8 +171,9 @@ def post_recommend(req: RecommendRequest) -> RecommendationResponse:
                 text = text[4:].strip()
         parsed = json.loads(text)
         scenarios = [RecommendationScenario(**s) for s in parsed["scenarios"][:3]]
-    except Exception as e:
-        # Fall back to a deterministic stub so the FE doesn't crash
+        # Belt-and-braces: clip percentages even if the model ignored the prompt.
+        scenarios = [_clip_scenario(s) for s in scenarios]
+    except Exception:
         scenarios = _stub_scenarios(req.sku, req.sub_channel, req.period, ctx)
 
     return RecommendationResponse(
@@ -168,6 +182,14 @@ def post_recommend(req: RecommendRequest) -> RecommendationResponse:
         current_gap_pct=ctx.get("gap_pct", 0.0),
         scenarios=scenarios,
     )
+
+
+def _clip_scenario(s: RecommendationScenario) -> RecommendationScenario:
+    """Defensive clipping in case the LLM ignores the prompt's range hints."""
+    s.total_expected_gap_closed_pct = max(0.0, min(1.2, s.total_expected_gap_closed_pct))
+    for a in (s.actions or []):
+        a.expected_gap_closed_pct = max(0.0, min(1.0, a.expected_gap_closed_pct))
+    return s
 
 
 def _stub_scenarios(sku: str, sub_channel: str, period: str, ctx: dict) -> list[RecommendationScenario]:

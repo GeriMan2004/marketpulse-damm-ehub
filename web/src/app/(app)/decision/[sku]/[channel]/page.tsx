@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { serverFetch } from "@/lib/api"
 import { skuLabel, channelLabel } from "@/lib/meta"
-import { formatHl, formatPercent, gapTone, formatPeriod } from "@/lib/format"
+import { formatHl, formatPercent, gapColor, formatPeriod } from "@/lib/format"
 import type { components } from "@/lib/api.gen"
 import { DecisionTabs } from "./decision-tabs"
 import { DiagnosisPanel } from "./diagnosis-panel"
@@ -46,20 +46,19 @@ export default async function DecisionPage({
     : matchingGaps[0]
   const targetPeriod = currentGap?.period ?? period
 
+  const VALID_TABS = ["diagnosis", "options", "simulate"] as const
+  type TabSlot = (typeof VALID_TABS)[number]
+  const activeTab: TabSlot = (VALID_TABS as readonly string[]).includes(tab ?? "")
+    ? (tab as TabSlot)
+    : "diagnosis"
+
   const gapBadge = currentGap ? (
     <div className="flex items-center gap-3">
       <div className="text-right">
         <div className="text-[10px] uppercase tracking-wide text-neutral-500 font-medium leading-tight">Gap</div>
         <div
           className="text-sm font-semibold tabular-nums tracking-tight"
-          style={{
-            color:
-              gapTone(currentGap.gap_pct) === "negative"
-                ? "var(--negative)"
-                : gapTone(currentGap.gap_pct) === "positive"
-                ? "var(--positive)"
-                : "#171717",
-          }}
+          style={{ color: gapColor(currentGap.gap_pct) }}
         >
           {formatPercent(currentGap.gap_pct, 1)} · {formatHl(currentGap.gap_hl)}
         </div>
@@ -83,23 +82,24 @@ export default async function DecisionPage({
           )}
         </p>
 
-        <DecisionTabs defaultTab={tab ?? "diagnosis"}>
-          {{
-            diagnosis: (
-              <Suspense fallback={<PanelSkeleton />}>
-                <DiagnosisPanel sku={sku} sub_channel={sub_channel} />
-              </Suspense>
-            ),
-            options: (
-              <Suspense fallback={<PanelSkeleton />}>
-                <OptionsPanel sku={sku} sub_channel={sub_channel} period={targetPeriod} />
-              </Suspense>
-            ),
-            simulate: (
-              <SimulatePanel sku={sku} sub_channel={sub_channel} />
-            ),
-          }}
-        </DecisionTabs>
+        {/* Only the active tab renders. Switching tabs updates ?tab= which
+            re-renders just that panel via RSC + Suspense. Avoids the
+            Recharts width=-1 warning (hidden tabs collapse to 0 width)
+            and avoids wasted LLM calls on tabs the user never visits. */}
+        <DecisionTabs active={activeTab} />
+        <div className="mt-4">
+          {activeTab === "options" ? (
+            <Suspense fallback={<PanelSkeleton />}>
+              <OptionsPanel sku={sku} sub_channel={sub_channel} period={targetPeriod} />
+            </Suspense>
+          ) : activeTab === "simulate" ? (
+            <SimulatePanel sku={sku} sub_channel={sub_channel} />
+          ) : (
+            <Suspense fallback={<PanelSkeleton />}>
+              <DiagnosisPanel sku={sku} sub_channel={sub_channel} />
+            </Suspense>
+          )}
+        </div>
       </PageWidthWrapper>
     </PageContent>
   )

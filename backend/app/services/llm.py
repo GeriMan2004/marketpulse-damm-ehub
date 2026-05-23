@@ -42,12 +42,17 @@ def _resolve_token() -> str:
     )
 
 
-def get_client(profile: str = "fast") -> InferenceClient:
-    """Build an InferenceClient for the requested profile."""
+def get_client(profile: str = "fast", timeout: float | None = 25.0) -> InferenceClient:
+    """Build an InferenceClient for the requested profile.
+
+    Default timeout is 25s — without it the client can hang for minutes on
+    a stalled provider, which freezes the dashboard's Options tab. Routers
+    that need a longer ceiling can pass timeout=None.
+    """
     if profile not in MODELS:
         raise ValueError(f"Unknown profile {profile!r}. Choices: {list(MODELS)}")
     model, provider = MODELS[profile]
-    kw: dict[str, Any] = {"model": model, "token": _resolve_token()}
+    kw: dict[str, Any] = {"model": model, "token": _resolve_token(), "timeout": timeout}
     if provider:
         kw["provider"] = provider
     return InferenceClient(**kw)

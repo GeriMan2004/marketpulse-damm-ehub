@@ -107,9 +107,9 @@ function Section({
 }
 
 function InboxRow({ gap, meta, positive: _positive }: { gap: GapItem; meta: Meta; positive?: boolean }) {
-  const tone = gapTone(gap.gap_pct)
-  const badgeVariant =
-    tone === "negative" ? "negative" : tone === "positive" ? "positive" : tone === "warn" ? "warn" : "outline"
+  // 5-tier severity → badge variant. Critical (≤-25%) gets a darker red so a
+  // -50% miss visually outweighs a -5% nudge.
+  const badgeVariant = gapTone(gap.gap_pct)
   const href = `/decision/${encodeURIComponent(gap.sku)}/${encodeURIComponent(
     gap.sub_channel,
   )}?period=${encodeURIComponent(gap.period)}`

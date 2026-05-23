@@ -5,18 +5,22 @@ import {
 } from "recharts"
 import type { components } from "@/lib/api.gen"
 import { formatHl } from "@/lib/format"
+import { driverLabel } from "@/lib/driver-labels"
 
 type Driver = components["schemas"]["Driver"]
 
 export function DriversWaterfall({ drivers }: { drivers: Driver[] }) {
-  const data = drivers.map((d) => ({
-    feature: d.feature.length > 22 ? d.feature.slice(0, 22) + "…" : d.feature,
-    value: d.shap_value,
-    direction: d.direction,
-  }))
+  const data = drivers.map((d) => {
+    const label = driverLabel(d.feature)
+    return {
+      feature: label.length > 22 ? label.slice(0, 22) + "…" : label,
+      value: d.shap_value,
+      direction: d.direction,
+    }
+  })
 
   return (
-    <div className="w-full h-[280px]">
+    <div className="w-full h-[260px]">
       <ResponsiveContainer>
         <BarChart data={data} layout="vertical" margin={{ top: 4, right: 12, bottom: 0, left: 8 }}>
           <CartesianGrid strokeDasharray="2 4" stroke="var(--border)" horizontal={false} />
@@ -30,7 +34,7 @@ export function DriversWaterfall({ drivers }: { drivers: Driver[] }) {
             type="category" dataKey="feature"
             tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
             stroke="var(--border)"
-            width={140}
+            width={160}
           />
           <Tooltip
             cursor={{ fill: "var(--accent)" }}

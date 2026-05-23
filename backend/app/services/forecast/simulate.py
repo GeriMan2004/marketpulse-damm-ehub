@@ -33,11 +33,33 @@ MONTHLY = ROOT / "app" / "data" / "snapshots" / "wide_monthly.parquet"
 
 
 def _parse_period(s: str) -> date_t:
-    """'Nov.26' → date(2026, 11, 1)"""
-    SPA = {"Ene":1,"Feb":2,"Mar":3,"Abr":4,"May":5,"Jun":6,
-           "Jul":7,"Ago":8,"Sep":9,"Oct":10,"Nov":11,"Dic":12}
-    m, y = s.split(".")
-    return date_t(2000 + int(y), SPA[m[:3]], 1)
+    """Parse a period string in any of three formats:
+
+      "Nov.26"  → English short ("%b.%y" — what /api/forecast emits)
+      "2026-11" → ISO short
+      "Nov 2026" → English long
+
+    The previous version used a Spanish abbreviation table (Ene/Abr/Ago/Dic)
+    against `strftime("%b")` which emits English — so Jan/Apr/Aug/Dec all
+    crashed with KeyError. This version normalises on English and handles
+    the ISO format the FE sometimes sends.
+    """
+    EN = {"Jan":1,"Feb":2,"Mar":3,"Apr":4,"May":5,"Jun":6,
+          "Jul":7,"Aug":8,"Sep":9,"Oct":10,"Nov":11,"Dec":12}
+    s = s.strip()
+
+    # ISO format: 2026-11
+    if "-" in s and s.split("-")[0].isdigit():
+        parts = s.split("-")
+        return date_t(int(parts[0]), int(parts[1]), 1)
+
+    # Short English: Nov.26 (or "Nov 26")
+    sep = "." if "." in s else " "
+    m, y = s.split(sep)
+    year_int = int(y)
+    if year_int < 100:
+        year_int += 2000
+    return date_t(year_int, EN[m[:3].title()], 1)
 
 
 def simulate(req: SimulationRequest) -> SimulationResult:
