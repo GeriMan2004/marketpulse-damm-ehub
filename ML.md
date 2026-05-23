@@ -51,6 +51,12 @@ Three components, ensembled at the SKU × SubChannel × month level.
 
 One model, fit jointly on **all 471 SKU×SubChannel series**. Cold-start series borrow strength from long ones via the shared trees.
 
+**Overfitting controls** ([D-010](DECISIONS.md)). With only ~19k training rows and 500+ trees per quantile, the model can memorize. We use three independent safeguards:
+
+1. **Early stopping** — train up to `n_estimators=1500` but stop when validation MAPE doesn't improve for 50 rounds. The model self-picks its own size per quantile.
+2. **L2 regularization** — `reg_lambda=0.1` penalizes large leaf weights.
+3. **Learning curve artifact** — per-iteration train/val metrics persisted to `snapshots/learning_curves.parquet` so the dashboard can show the convergence point.
+
 ```python
 from mlforecast import MLForecast
 from mlforecast.lag_transforms import RollingMean, RollingStd
@@ -59,15 +65,18 @@ import lightgbm as lgb
 
 QUANTILES = {"p10": 0.1, "p50": 0.5, "p90": 0.9}
 
-models = {
-    name: lgb.LGBMRegressor(
-        objective="quantile", alpha=q,
-        n_estimators=500, learning_rate=0.05,
-        num_leaves=63, min_data_in_leaf=20,
+def make_model(alpha: float) -> lgb.LGBMRegressor:
+    return lgb.LGBMRegressor(
+        objective="quantile", alpha=alpha,
+        n_estimators=1500,            # upper bound; early stopping picks the real count
+        learning_rate=0.05,
+        num_leaves=63,
+        min_data_in_leaf=20,
+        reg_lambda=0.1,               # L2 on leaf weights
         verbose=-1,
     )
-    for name, q in QUANTILES.items()
-}
+
+models = {name: make_model(q) for name, q in QUANTILES.items()}
 
 fcst = MLForecast(
     models=models,
@@ -80,7 +89,26 @@ fcst = MLForecast(
     date_features=["month", "quarter"],
     target_transforms=[Differences([12])],      # remove yearly seasonality before fit
 )
+
+# Fit with early stopping + per-iteration metric capture
+# The last 3 months of training data are the early-stopping validation slice
+es_callbacks = [
+    lgb.early_stopping(stopping_rounds=50, verbose=False),
+    lgb.record_evaluation(eval_dict := {}),
+]
+fcst.fit(
+    train_df,
+    fit_kwargs={
+        "eval_set": [(X_val, y_val)],
+        "eval_metric": "mape",
+        "callbacks": es_callbacks,
+    },
+)
+# Persist learning curves for the /diagnostics page
+write_learning_curves(eval_dict, SNAPSHOTS / "learning_curves.parquet")
 ```
+
+The training script logs `best_iteration_` per quantile. Typical good behavior: early stopping fires somewhere between 150–400 trees out of the 1500 cap; that's the convergence sweet spot.
 
 #### Features fed to the LightGBM
 
@@ -327,6 +355,8 @@ Numbers filled at H10 from the 3-fold rolling CV on Oct/Nov/Dec 2025.
 - [ ] LightGBM ensemble + Chronos + (Moirai on GROCERY) trained, intervals computed
 - [ ] Hierarchical reconciliation passes the "children sum to parent" assertion
 - [ ] Validation MAPE table populated; ensemble weights persisted to `models/weights.json`
+- [ ] LightGBM early stopping fires at < 1500 trees (logged as `best_iteration_` per quantile)
+- [ ] `snapshots/learning_curves.parquet` written, shows train vs val MAPE per iteration; final val MAPE < (final train MAPE) × 1.5  (gap-to-train sanity check — flags overfit)
 - [ ] SHAP explainer pickled to `models/shap_explainer.pkl` for fast `/api/drivers` calls
 - [ ] All forecasts + intervals snapshotted to `backend/app/data/snapshots/forecast.parquet`
 - [ ] Anomaly events written to `snapshots/anomalies.parquet`

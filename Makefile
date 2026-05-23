@@ -83,6 +83,9 @@ doctor:
 		else \
 			echo "  ❌ no token — either set HF_TOKEN in $(BE)/.env or run \`hf auth login\`"; \
 		fi
+	@echo "→ libomp (LightGBM)..."; \
+		test -f /opt/homebrew/opt/libomp/lib/libomp.dylib && echo "  ✓ libomp present" \
+		|| echo "  ❌ install: brew install libomp  (LightGBM needs OpenMP on macOS)"
 	@echo "→ raw data..."; \
 		test -d $(BE)/app/data/raw && ls $(BE)/app/data/raw/*.xlsx 2>/dev/null | wc -l | awk '{ if ($$1==0) print "  ❌ no xlsx files — get them from your teammate"; else print "  ✓ " $$1 " xlsx file(s) present" }'
 	@echo "→ MongoDB..."; nc -z localhost 27017 2>/dev/null && echo "  ✓ reachable on :27017" || echo "  ⚠️  optional — needed only once persistence lands"

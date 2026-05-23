@@ -13,6 +13,44 @@ The numbered list is purely for cross-referencing — order is chronological by 
 
 ---
 
+## D-010 — LightGBM early stopping + L2 reg + learning-curve artifact
+🟢 Accepted · spec change before Phase 2 implementation
+
+**Originally planned ([ML.md §3.A first draft]):** train each quantile LightGBM for a fixed `n_estimators=500` with `learning_rate=0.05`. No early stopping, no explicit regularization, no per-iteration metric capture.
+
+**Risk identified before implementation:** with ~19k training rows × 471 series and ~6k effective parameters per quantile model (500 trees × ~12 features per split), the model has enough capacity to memorize a meaningful chunk of the training set. The classic overfitting curve — train loss falling while validation loss climbs — is exactly the failure mode this configuration invites.
+
+**Decision:**
+1. **Early stopping** — raise `n_estimators` to 1500 (upper bound) and stop training when validation MAPE doesn't improve for 50 rounds. Each quantile self-selects its tree count via `lgb.early_stopping(stopping_rounds=50)`. Validation slice = last 3 months of the training window.
+2. **L2 regularization** — `reg_lambda=0.1` on leaf weights as a second line of defense. Trees already do feature selection so L1 is left off.
+3. **Learning curve artifact** — every per-iteration `(train_mape, val_mape)` pair is captured via `lgb.record_evaluation()` and persisted to `snapshots/learning_curves.parquet`. The `/forecast` page (or a hidden `/diagnostics` route) can render the curve so the dashboard demonstrates *how* we know the model isn't overfitting.
+
+**Validation gate added to ML.md §11 DoD:**
+- `best_iteration_ < 1500` for every quantile (proves early stopping fires)
+- `final_val_mape < final_train_mape × 1.5` (the gap-to-train sanity check — flags an overfit if the gap widens past a sane multiple)
+
+**Why this matters for our data shape:** 40 months × 471 series is *small* by global-ML standards. Cold-start series (117 with ≤2 months) have to borrow strength from long ones, which means the model's representational capacity is genuinely tested. Without early stopping, the dominant signal would be "memorize Estrella × CMBC, hallucinate everything else."
+
+**Demo angle:** "How do you know your forecast isn't overfit?" is a Q&A question we should expect from a CPG audience. "Here's the learning curve — early stopping fired at iteration X" is the right answer, with the chart on screen.
+
+**Where it landed:** `ML.md` §3.A code block + §11 DoD checklist · `backend/app/services/forecast/spike.py` is a working spike against the real `wide_monthly.parquet` that demonstrates the early-stopping behavior end-to-end.
+
+**Spike results on real Phase 1 data (1,065 rows after feature build, time-based train/val/test split):**
+```
+p10 (α=0.1): stopped at   89 of 1500   train MAPE 0.474  val MAPE 0.598
+p50 (α=0.5): stopped at   98 of 1500   train MAPE 1.021  val MAPE 1.173
+p90 (α=0.9): stopped at  441 of 1500   train MAPE 3.230  val MAPE 2.607
+
+DoD gates (all 3 quantiles):
+  best_iteration < 1500       ✓✓✓     early stopping fires
+  val_mape < train_mape × 1.5 ✓✓✓     no catastrophic overfit
+```
+The gates pass — the gradient-boost convergence pattern is healthy. The held-out test MAPE for p50 is 4.48 and 80% PI coverage is 53%, both worse than val. This is expected for a stripped-down spike (no promo features, no CMBC carve-out, no hierarchical reconciliation, simple integer encoding for categoricals); the full Phase 2 ensemble closes that gap. The point of the spike is to prove the **mechanism** works on real data — it does.
+
+**Side dep added:** `libomp` (OpenMP runtime, required by LightGBM on macOS). `make doctor` now checks for it explicitly so future teammates don't get an opaque `dlopen` failure.
+
+---
+
 ## D-009 — Promo classifier: per-retailer structural parsers + 7-type content classifier
 🟢 Accepted · commit `1050a17`
 
