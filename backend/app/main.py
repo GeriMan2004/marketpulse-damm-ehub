@@ -22,6 +22,7 @@ from app.routers import (
     gap,
     kpis,
     meta,
+    news,
     promos,
     recommend,
     simulate,
@@ -65,6 +66,7 @@ app.include_router(explain_view.router)
 app.include_router(debug_data.router)
 app.include_router(anomalies.router)
 app.include_router(aggregates.router)
+app.include_router(news.router)
 
 
 @app.get("/", include_in_schema=False)

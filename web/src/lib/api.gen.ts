@@ -284,6 +284,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/news": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get News */
+        get: operations["get_news_api_news_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/refresh-news": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh News
+         * @description Re-run Tavily, merge into the cache, purge >30-day rows.
+         *
+         *     Hackathon-grade endpoint: no auth. Don't link from the UI. Call from
+         *     a script or `make news`.
+         */
+        post: operations["refresh_news_api_admin_refresh_news_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -500,6 +540,64 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * NewsArticle
+         * @description A single trade-press article surfaced by Tavily, tagged for context.
+         */
+        NewsArticle: {
+            /**
+             * Id
+             * @description SHA1 of the article URL — used as the dedup key.
+             */
+            id: string;
+            /** Url */
+            url: string;
+            /** Title */
+            title: string;
+            /**
+             * Summary
+             * @description Tavily's snippet, ~200 chars.
+             */
+            summary: string;
+            /** Source Domain */
+            source_domain: string;
+            /**
+             * Published At
+             * @description When Tavily reported the article was published. May be null.
+             */
+            published_at?: string | null;
+            /**
+             * Fetched At
+             * Format: date-time
+             * @description When we last refreshed this row.
+             */
+            fetched_at: string;
+            /** Brand Tags */
+            brand_tags?: string[];
+            /** Channel Tags */
+            channel_tags?: string[];
+            /** Event Tags */
+            event_tags?: string[];
+            /**
+             * Relevance Score
+             * @description Tavily's 0..1 relevance score from the original query.
+             * @default 0
+             */
+            relevance_score: number;
+        };
+        /**
+         * NewsResponse
+         * @description What GET /api/news returns.
+         */
+        NewsResponse: {
+            /** Articles */
+            articles: components["schemas"]["NewsArticle"][];
+            /**
+             * Updated At
+             * @description Latest refresh timestamp; null if cache is empty.
+             */
+            updated_at?: string | null;
+        };
         /** PromoROI */
         PromoROI: {
             /** Promo Type */
@@ -587,6 +685,37 @@ export interface components {
             total_expected_gap_closed_pct: number;
             /** Risk Notes */
             risk_notes: string;
+        };
+        /**
+         * RefreshResult
+         * @description What POST /api/admin/refresh-news returns.
+         */
+        RefreshResult: {
+            /**
+             * Fetched
+             * @description Total articles returned by Tavily across all queries.
+             */
+            fetched: number;
+            /**
+             * New Articles
+             * @description Articles that weren't already in the cache.
+             */
+            new_articles: number;
+            /**
+             * Cache Size
+             * @description Cache size after the refresh + purge.
+             */
+            cache_size: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * Error
+             * @description Non-null when the refresh ran into a recoverable error (e.g. missing key, Tavily 5xx). The cache is preserved in those cases.
+             */
+            error?: string | null;
         };
         /** SimulationRequest */
         SimulationRequest: {
@@ -739,6 +868,7 @@ export interface operations {
                 to?: string | null;
                 sort?: string;
                 limit?: number;
+                min_quality?: number;
             };
             header?: never;
             path?: never;
@@ -1117,6 +1247,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_news_api_news_get: {
+        parameters: {
+            query?: {
+                /** @description Brand tag, e.g. 'estrella' */
+                brand?: string | null;
+                /** @description Channel tag, e.g. 'tesco' */
+                channel?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NewsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_news_api_admin_refresh_news_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefreshResult"];
                 };
             };
         };

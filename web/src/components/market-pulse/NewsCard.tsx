@@ -1,47 +1,19 @@
 "use client"
 
 /**
- * A single article in the Market Pulse rail.
+ * Compact news card for the Sidebar's Market Pulse section (~210px wide).
  *
- * Layout (per the handoff spec):
- *   - Top row: favicon (16px) + source domain + relative time (right)
- *   - Headline: 2 lines max, truncated
- *   - Tag chips: 1-2 most relevant
- *   - Click anywhere: opens url in a new tab
+ * Layout (tight by design — every line earns its place):
+ *   favicon  source.co.uk · 2h
+ *   2-line headline that truncates on the third
+ *   [relevant accent border-left when matching the current SKU's brand]
  *
- * Relevance accent: when `relevant` is true, render a 2px left border in
- * --positive and a small "Relevant" chip. This is the context-aware
- * highlight on the decision page when the article matches the SKU's brand.
+ * Click anywhere on the card opens the article in a new tab. No summary,
+ * no tag chips — at 210px both crowd the headline.
  */
 
 import { cn } from "@/lib/utils"
 import type { NewsArticle } from "@/types/news"
-
-const TAG_LABELS: Record<string, string> = {
-  // Brands
-  estrella: "Estrella",
-  cruzcampo: "Cruzcampo",
-  madri: "Madri",
-  san_miguel: "San Miguel",
-  competitor: "Competitor",
-  // Channels
-  tesco: "Tesco",
-  sainsburys: "Sainsbury's",
-  asda: "Asda",
-  morrisons: "Morrisons",
-  waitrose: "Waitrose",
-  on_trade: "On-trade",
-  // Events
-  price: "Price",
-  launch: "Launch",
-  delisting: "Delisting",
-  weather: "Weather",
-  regulation: "Regulation",
-}
-
-function tagLabel(tag: string): string {
-  return TAG_LABELS[tag] ?? tag.replace(/_/g, " ")
-}
 
 function relativeTime(iso: string | null): string {
   if (!iso) return ""
@@ -49,7 +21,7 @@ function relativeTime(iso: string | null): string {
   if (Number.isNaN(then)) return ""
   const diffMs = Date.now() - then
   const m = Math.round(diffMs / 60_000)
-  if (m < 1) return "just now"
+  if (m < 1) return "now"
   if (m < 60) return `${m}m`
   const h = Math.round(m / 60)
   if (h < 24) return `${h}h`
@@ -60,17 +32,6 @@ function relativeTime(iso: string | null): string {
   return `${Math.round(d / 30)}mo`
 }
 
-/** Pick the 1-2 most informative tags from all three buckets. */
-function pickDisplayTags(a: NewsArticle): string[] {
-  // Priority: event > brand > channel. Event is the "what happened",
-  // brand/channel is the "who".
-  const picked: string[] = []
-  if (a.event_tags[0]) picked.push(a.event_tags[0])
-  if (a.brand_tags[0]) picked.push(a.brand_tags[0])
-  else if (a.channel_tags[0]) picked.push(a.channel_tags[0])
-  return picked.slice(0, 2)
-}
-
 export function NewsCard({
   article,
   relevant,
@@ -78,7 +39,6 @@ export function NewsCard({
   article: NewsArticle
   relevant?: boolean
 }) {
-  const tags = pickDisplayTags(article)
   const dateStr = relativeTime(article.published_at ?? article.fetched_at)
   const favicon = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(
     article.source_domain,
@@ -90,49 +50,28 @@ export function NewsCard({
       target="_blank"
       rel="noopener noreferrer"
       className={cn(
-        "group block rounded-lg border border-transparent px-3 py-2.5 transition-colors",
+        "group block rounded-md px-2 py-1.5 transition-colors",
         "hover:bg-[color:var(--muted)]",
-        relevant && "border-l-2 border-l-[color:var(--positive)] bg-[color:var(--positive-soft)]/30",
+        relevant && "border-l-2 border-l-[color:var(--positive)] bg-[color:var(--positive-soft)]/30 pl-1.5",
       )}
     >
-      {/* Top row: source + time */}
-      <div className="flex items-center gap-1.5 text-[10.5px] text-[color:var(--muted-foreground)] mb-1.5">
+      {/* Source + time row */}
+      <div className="flex items-center gap-1.5 text-[10px] text-[color:var(--muted-foreground)] mb-1">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={favicon}
           alt=""
-          className="h-3.5 w-3.5 rounded-sm shrink-0"
+          className="h-3 w-3 rounded-sm shrink-0"
           loading="lazy"
         />
-        <span className="truncate flex-1">{article.source_domain}</span>
-        {dateStr && (
-          <span className="tabular-nums shrink-0">{dateStr}</span>
-        )}
+        <span className="truncate flex-1 min-w-0">{article.source_domain}</span>
+        {dateStr && <span className="tabular-nums shrink-0">{dateStr}</span>}
       </div>
 
       {/* Headline */}
-      <div className="text-[13px] font-medium leading-snug text-[color:var(--foreground)] line-clamp-2 group-hover:text-[color:var(--foreground)]">
+      <div className="text-[12px] font-medium leading-snug text-[color:var(--foreground)] line-clamp-2">
         {article.title}
       </div>
-
-      {/* Tag chips */}
-      {(relevant || tags.length > 0) && (
-        <div className="mt-2 flex flex-wrap items-center gap-1">
-          {relevant && (
-            <span className="inline-flex items-center rounded-md bg-[color:var(--positive)] px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wide text-white">
-              Relevant
-            </span>
-          )}
-          {tags.map((t) => (
-            <span
-              key={t}
-              className="inline-flex items-center rounded-md bg-[color:var(--muted)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--muted-foreground)]"
-            >
-              {tagLabel(t)}
-            </span>
-          ))}
-        </div>
-      )}
     </a>
   )
 }

@@ -30,6 +30,7 @@ help:
 	@echo "  make types        regenerate web/ TS types from live OpenAPI"
 	@echo "  make data         run ETL (raw Excel → snapshots/*.parquet)"
 	@echo "  make train        fit forecast ensemble + write snapshots"
+	@echo "  make news         refresh Market Pulse news cache (Tavily)"
 	@echo ""
 	@echo "  make backend      run FastAPI on :8000 only"
 	@echo "  make web          run Next.js on :3000 only"
@@ -114,6 +115,16 @@ data:
 
 train: data
 	cd $(BE) && $(PY) -u -m app.services.forecast.train
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Market Pulse — UK trade-press news refresh (Tavily)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Pull fresh news into the cache. Needs TAVILY_API_KEY in backend/.env.
+# Safe to run repeatedly — idempotent dedup + 30-day retention purge.
+.PHONY: news
+news:
+	cd $(BE) && uv run python -m app.jobs.refresh_news
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Individual servers

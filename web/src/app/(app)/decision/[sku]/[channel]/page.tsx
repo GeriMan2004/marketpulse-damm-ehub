@@ -19,6 +19,7 @@ import { DecisionTabs } from "./decision-tabs"
 import { DiagnosisPanel } from "./diagnosis-panel"
 import { OptionsPanel } from "./options-panel"
 import { SimulatePanel } from "./simulate-panel"
+import { RecentDecisionTracker } from "@/components/RecentDecisionTracker"
 
 type Meta = components["schemas"]["MetaResponse"]
 type GapItem = components["schemas"]["GapItem"]
@@ -69,6 +70,15 @@ export default async function DecisionPage({
 
   return (
     <PageContent title={skuLabel(meta, sku)} titleBackHref="/" controls={gapBadge}>
+      {/* Side-effect-only: writes to localStorage so the sidebar's
+          "Recent" section can show this visit. Renders nothing. */}
+      <RecentDecisionTracker
+        sku={sku}
+        sub_channel={sub_channel}
+        period={targetPeriod}
+        sku_label={skuLabel(meta, sku)}
+        channel_label={channelLabel(meta, sub_channel)}
+      />
       <PageWidthWrapper className="pb-10">
         <p className="text-sm text-neutral-500 mb-6">
           {channelLabel(meta, sub_channel)} · {targetPeriod ? formatPeriod(targetPeriod) : "—"}
