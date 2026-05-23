@@ -34,8 +34,8 @@ export function ForecastChart({
   }))
 
   return (
-    <div className="w-full h-[280px]">
-      <ResponsiveContainer>
+    <div className="w-full h-[280px] min-w-0">
+      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
         <ComposedChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="2 4" stroke="var(--border)" vertical={false} />
           <XAxis dataKey="period" tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} stroke="var(--border)" />
