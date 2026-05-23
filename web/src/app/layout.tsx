@@ -1,7 +1,12 @@
+/**
+ * Root layout — only renders <html><body> and loads the font + global CSS.
+ *
+ * The actual chrome (sidebar / topbar) lives in `(app)/layout.tsx` so it
+ * doesn't bleed into the login screen, which has its own `(auth)/layout.tsx`.
+ */
+
 import type { Metadata } from "next"
 import { Inter } from "next/font/google"
-import { Sidebar } from "@/components/shell/Sidebar"
-import { Topbar } from "@/components/shell/Topbar"
 import "./globals.css"
 
 const inter = Inter({
@@ -19,15 +24,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable} h-full antialiased`}>
-      <body className="min-h-full bg-background text-foreground">
-        <div className="flex min-h-screen">
-          <Sidebar />
-          <div className="flex-1 min-w-0 flex flex-col">
-            <Topbar />
-            <main className="flex-1">{children}</main>
-          </div>
-        </div>
-      </body>
+      <body className="min-h-full bg-background text-foreground">{children}</body>
     </html>
   )
 }

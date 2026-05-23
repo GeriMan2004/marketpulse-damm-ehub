@@ -14,8 +14,8 @@
  */
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
-import { Inbox, Tag, MessageSquare, Activity } from "lucide-react"
+import { usePathname, useRouter } from "next/navigation"
+import { Inbox, Tag, MessageSquare, Activity, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const NAV = [
@@ -26,6 +26,13 @@ const NAV = [
 
 export function Sidebar() {
   const pathname = usePathname()
+  const router = useRouter()
+
+  function signOut() {
+    document.cookie = "mp_session=; path=/; max-age=0; samesite=lax"
+    router.push("/login")
+    router.refresh()
+  }
 
   return (
     <aside className="w-60 shrink-0 border-r border-border bg-card flex flex-col h-screen sticky top-0">
@@ -71,10 +78,17 @@ export function Sidebar() {
           <div className="h-7 w-7 rounded-full bg-secondary flex items-center justify-center text-[11px] font-semibold">
             CM
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div className="text-[12px] font-medium truncate">Commercial Manager</div>
             <div className="text-[10px] text-muted-foreground truncate">UK · Damm</div>
           </div>
+          <button
+            onClick={signOut}
+            title="Sign out"
+            className="p-1.5 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+          </button>
         </div>
       </div>
     </aside>

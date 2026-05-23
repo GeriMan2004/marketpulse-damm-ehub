@@ -9,6 +9,9 @@
 ## Information architecture
 
 ```
+/login                               Sign in (fake — any button works)
+
+— authenticated app (proxy gate via mp_session cookie) —
 /                                    Triage Inbox (HOME)
 /decision/[sku]/[channel]            Unified deep-dive
   ?tab=diagnosis                       Step 1 — what & why
@@ -17,6 +20,18 @@
 /promos                              Promo ROI library
 /ask                                 Plain-English Q&A
 ```
+
+Auth is intentionally fake. Any button on `/login` sets the `mp_session`
+cookie and bounces the user back to the requested route. The proxy
+(`web/proxy.ts`, the Next 16 rename of `middleware.ts`) checks the cookie
+on every non-`/login`, non-`/api/*` request and redirects to `/login?next=…`
+if missing. Sign-out clears the cookie. When real auth lands (Clerk /
+NextAuth), only `/login/page.tsx` changes; the rest of the app already
+trusts the cookie.
+
+The routes live under two App Router groups:
+- **`(app)/`** — wrapped by the Sidebar + Topbar shell
+- **`(auth)/`** — wrapped by a clean centered layout, no chrome
 
 Four routes total. Each one answers ONE question for the Commercial Manager:
 
