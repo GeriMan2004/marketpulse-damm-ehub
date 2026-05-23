@@ -146,24 +146,22 @@ export type RecommendationResponse = {
   scenarios: RecommendationScenario[]
 }
 
-export type SankeyNode = {
-  label: string
-  level: 0 | 1 | 2 | 3
-  raw_code: string | null
-  forecast_hl: number
-  target_hl: number
-  gap_pct: number
+export type TimelinePoint = {
+  period: string
+  period_start: string
+  point: number
+  lo80: number
+  hi80: number
+  target: number | null
 }
 
-export type SankeyLink = {
-  source: number
+export type ChannelRow = {
+  name: string
+  code: string
+  forecast: number
   target: number
-  value: number
   gap_pct: number
-  label: string
 }
-
-export type SankeyResponse = { nodes: SankeyNode[]; links: SankeyLink[] }
 
 export type ExplainViewSummary = {
   headline: string
@@ -231,11 +229,28 @@ export const useAnomalies = (sub_channel: string | null = null, limit = 20) => u
   staleTime: 5 * 60_000,
 })
 
-export const useSankey = () => useQuery({
-  queryKey: ["sankey"],
-  queryFn: () => getJson<SankeyResponse>("/sankey?top_brands=4"),
-  staleTime: 60_000,
-})
+export const useForecastTimeline = (brand: string | null = null, sub_channel: string | null = null) =>
+  useQuery({
+    queryKey: ["forecast_timeline", brand, sub_channel],
+    queryFn: () => {
+      const qs = new URLSearchParams()
+      if (brand) qs.set("brand", brand)
+      if (sub_channel) qs.set("sub_channel", sub_channel)
+      return getJson<TimelinePoint[]>(`/forecast/timeline?${qs}`)
+    },
+    staleTime: 60_000,
+  })
+
+export const useForecastByChannel = (brand: string | null = null) =>
+  useQuery({
+    queryKey: ["forecast_by_channel", brand],
+    queryFn: () => {
+      const qs = new URLSearchParams()
+      if (brand) qs.set("brand", brand)
+      return getJson<ChannelRow[]>(`/forecast/by-sub-channel?${qs}`)
+    },
+    staleTime: 60_000,
+  })
 
 export const useSimulate = () => useMutation({
   mutationFn: (req: { sku: string; sub_channel: string; months: string[]; discount_pct: number; promo_type: string }) =>

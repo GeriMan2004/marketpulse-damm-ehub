@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { BorderBeam } from "@/components/ui/border-beam"
-import { FilterBar } from "@/components/FilterBar"
+import { StickyFilterBar } from "@/components/StickyFilterBar"
 import { useRecommend, useMeta } from "@/lib/hooks"
 import { formatHl, formatPercent, formatGBP } from "@/lib/format"
 
@@ -39,7 +39,7 @@ export default function Recommendations() {
           Three scenarios from the LLM, grounded in real forecast + driver + promo-ROI data.
         </div>
       </div>
-      <FilterBar />
+      <StickyFilterBar />
 
       {!sku && (
         <Card><CardContent className="py-12 text-center text-sm text-muted-foreground">

@@ -1,42 +1,82 @@
-# Frontend — what was actually built
+# Frontend — Dub.co-style analytics dashboard
 
-> **Status: ✅ all 7 pages live**, multi-page router shell with persistent sidebar, real data through every page.
->
-> Aesthetic: flat, calm, data-first. Dark theme + Damm-red accent. No 3D / parallax / WebGL. Motion is reserved for KPI counters and the Magic UI `BorderBeam` on the "recommended" scenario card.
->
-> **License note:** every UI lib is MIT (or equivalent) and safe for the public repo.
+> **Status: ✅ all 7 pages live**, multi-page router shell with persistent sidebar.
+> **UI pattern: Dub.co's analytics page** ([app.dub.co](https://app.dub.co)). Sticky filter bar → KPI tiles → main chart → breakdown tables. See [DECISIONS.md D-018](DECISIONS.md) for the pivot rationale.
 
-## UX rationale — why this product is what it is
+## The Dub pattern, applied to our domain
 
-The brief asks for a tool that **forecasts**, **detects deviations**, and **recommends commercial actions**. Most teams will build a dashboard. We build a **decision-support assistant**.
-
-**Three layers, always in this order:**
+Every page that shows aggregated data follows the same composition:
 
 ```
-LAYER 1 — ANSWER       "Estrella in off-trade grocery is +15% above target across the quarter."
-LAYER 2 — EVIDENCE     forecast curve · confidence band · SHAP drivers · anomaly markers
-LAYER 3 — OPTIONS      3 scenario cards · simulator with live re-prediction
+┌─────────────────────────────────────────────────────────────────┐
+│ PAGE TITLE + period range                                        │
+├─────────────────────────────────────────────────────────────────┤
+│ STICKY FILTER BAR     Brand chip · Sub-channel chip · SKU chip   │
+│                       URL-synced, clear-filters link             │
+├─────────────────────────────────────────────────────────────────┤
+│ KPI ROW               4 slim tiles in a horizontal row           │
+├─────────────────────────────────────────────────────────────────┤
+│ MAIN CHART            Recharts time-series, area+line composed   │
+├─────────────────────────────────────────────────────────────────┤
+│ TWO-COLUMN BREAKDOWN  Problem-SKU table  |  Sub-channel bar      │
+├─────────────────────────────────────────────────────────────────┤
+│ LLM STORY CARD        3-bullet exec summary + next action        │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-Every page maps to one of three questions, surfaced in the sidebar as one-line hints:
+This is the exact shape of Dub.co's `/analytics` page — filter chips, metric tiles, main chart, breakdown tables. CPG users recognize it instantly because it's the same composition Tableau / Looker / Mixpanel use.
+
+## Why this shape works for a commercial director
+
+| Section | What the user looks at | What they do next |
+|---|---|---|
+| Filter bar | Already-applied dims (chip says "Sub-channel · Off-trade grocery") | Click a chip to re-cut |
+| KPI row | Are we OK overall? (4 numbers in 2 seconds) | If gap → scroll for detail |
+| Main chart | When are we drifting? (line vs target over time) | Hover a month, drill in |
+| Problem-SKU list | Which specific SKUs caused the drift? | Click row → /forecast for that SKU |
+| Sub-channel bar | Which channel is the worst leak? | Click bar → filter to that channel |
+| LLM story | Plain-English answer for the mobile reader | Follow the suggested next action |
+
+Every interaction stays on the same page — only the filters change. When a user wants depth on a single SKU, they click through to `/forecast?sku=...` which is the same Dub-shape (filter bar + KPIs + chart + table) but scoped to one SKU.
+
+## Three layers, always in this order
+
+```
+LAYER 1 — ANSWER       Forecast vs target. The KPI row + main chart answer this.
+LAYER 2 — EVIDENCE     Per-month gap table, anomaly markers, SHAP drivers.
+LAYER 3 — OPTIONS      Simulator (live re-prediction) + 3-scenario LLM recommendations.
+```
+
+The sidebar nav maps each page to one of three questions, surfaced as one-line hints:
 
 | Page | Question |
 |---|---|
 | `/` Overview | Where's the gap? |
-| `/forecast` | What does the model predict? |
+| `/forecast` | What does the model predict for a SKU? |
 | `/drivers` | Why is the gap there? |
 | `/promos` | What's worked before? |
 | `/simulator` | What if we change things? |
 | `/recommendations` | What should we do? |
 | `/chat` | Conversational deep-dive |
 
-**The hero visual: a budget Sankey.** Not yet-another-KPI-dashboard. The Sankey shows UK Total → SalesChannel → SubChannel → top-4 brands in one frame; flow width = forecast Hl, node color = forecast-vs-target gap on a diverging red→green scale. A commercial director sees the leak in two seconds. Clicking a node drills to that branch.
+## Chart library: Recharts (same as Dub)
 
-**Why we picked Sankey over treemap:** Sankey shows flow + hierarchy explicitly (matching how directors think about their book). Treemap shows volume well but hides the hierarchy. Sankey is also genuinely uncommon in CPG dashboards — a real visual differentiator. See [DECISIONS.md D-017](DECISIONS.md).
+We removed Plotly entirely — it broke twice in production with CJS/ESM interop issues (see [D-018](DECISIONS.md)). Recharts is what Dub uses, what shadcn templates assume, and it cuts the JS bundle from **5.2 MB → 968 KB**.
 
-**Label translation everywhere.** Raw codes (`EX23SRAN`, `GROCERY`, `Nov.26`) never appear on screen for end users. The backend's `meta.json` carries human labels (`Estrella Damm · 660ml nr bottle`, `Off-trade grocery`, `November 2026`); the frontend's `format.ts` handles client-side rendering (Hl, percent, GBP). See [DECISIONS.md D-016](DECISIONS.md).
+Four chart components live in `frontend/src/components/charts/`:
 
-**LLM narrative on top of every key visualization.** Charts are evidence; the LLM-generated sentence on top of them is the answer. A director scrolling on mobile gets the headline without having to interpret a Sankey.
+- `ForecastAreaChart.tsx` — main time-series with 80% PI shaded band
+- `GapByChannelChart.tsx` — horizontal bars colored by gap %
+- `DriversWaterfall.tsx` — SHAP horizontal bars, signed colors
+- `SimulatorChart.tsx` — baseline vs simulated overlaid lines
+
+## Label translation everywhere
+
+Raw codes (`EX23SRAN`, `GROCERY`, `Nov.26`) never appear in front of users. The backend's `meta.json` carries human labels (`Estrella Damm · 660ml nr bottle`, `Off-trade grocery`, `November 2026`); the frontend's `format.ts` handles client-side rendering (Hl, percent, GBP). See [DECISIONS.md D-016](DECISIONS.md).
+
+## LLM narrative on top of every key view
+
+Charts are evidence; the LLM-generated sentence on top is the answer. A director scrolling on mobile gets the headline without having to interpret a chart. The story card calls `/api/explain-view` with the current filters + visible state and renders the 3 bullets + suggested next action.
 
 ---
 

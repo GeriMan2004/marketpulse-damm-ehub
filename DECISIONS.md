@@ -13,7 +13,87 @@ The numbered list is purely for cross-referencing — order is chronological by 
 
 ---
 
+## D-018 — Full UI pivot to Dub.co's analytics-page pattern (Recharts, sticky filter bar)
+🟢 Accepted · supersedes D-017 · Phase 3
+
+**What was wrong:**
+1. Plotly broke twice in production. First the `react-plotly.js` default
+   export resolved to a CJS interop object (`{default: {default: Component}}`)
+   and crashed `<BudgetSankey>` with "Element type is invalid — got: object".
+   We fixed that by importing `plotly.js-dist-min` + the official
+   `react-plotly.js/factory`. Second crash: `createPlotlyComponent is not
+   a function` because the factory itself has the same default-export
+   problem. Three different workarounds, two black-screens later, the
+   tool was fundamentally hostile to our stack.
+2. The Sankey hero (D-017) was creative but visually unconventional for
+   CPG audiences. Most directors expect an analytics dashboard, not a
+   flow diagram.
+3. Our Overview was "passive dashboard" — KPIs + charts without an
+   explicit user flow. Even after redesigning as a "nav hub" (D-017),
+   it lacked the polished analytics-page pattern judges/users expect
+   from any modern dashboard product.
+
+**Decision:** pivot the entire frontend to mirror Dub.co's analytics-page
+pattern (the dashboard product at app.dub.co). Same shape:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ STICKY FILTER BAR  (Brand · Sub-channel · SKU chips, URL-synced) │
+├─────────────────────────────────────────────────────────────────┤
+│ KPI ROW            (4 slim tile cards in a horizontal row)       │
+├─────────────────────────────────────────────────────────────────┤
+│ MAIN CHART         (time-series, sub-channel breakdown, etc.)    │
+├─────────────────────────────────────────────────────────────────┤
+│ TWO-COLUMN ROW     (problem-SKU list + sub-channel bar chart)    │
+├─────────────────────────────────────────────────────────────────┤
+│ LLM STORY CARD     (3-bullet exec summary + suggested action)    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+This is the exact composition you find on dub.co's analytics page —
+filter chips, metric tiles, main chart, breakdown tables.
+
+**Chart library: Recharts** — same as Dub. The four chart components
+now live under `frontend/src/components/charts/`:
+- `ForecastAreaChart.tsx` — main time-series with 80% PI shaded band
+- `GapByChannelChart.tsx` — horizontal bars colored by gap %
+- `DriversWaterfall.tsx` — SHAP horizontal bars, +/- colored
+- `SimulatorChart.tsx` — baseline vs simulated overlaid lines
+
+**Filter bar (`StickyFilterBar.tsx`):** Dub's pattern of chip-style
+dropdowns that mirror their state to the URL. Sticky on scroll so users
+can re-cut data without scrolling back up. "Clear filters" link when
+any are active.
+
+**Backend additions:** two new endpoints to power the Dub-style
+aggregated views:
+- `GET /api/forecast/timeline` — monthly aggregated forecast + target
+  for the main chart (filter-aware via brand/sub_channel).
+- `GET /api/forecast/by-sub-channel` — per sub-channel totals for the
+  horizontal bar breakdown.
+
+**Bundle reduction:** removing Plotly dropped the JS bundle from
+**5.2 MB → 968 KB** (gzipped: 1.56 MB → 293 KB). Recharts is a fraction
+of the size.
+
+**Where it landed:**
+- Backend: `app/routers/aggregates.py` (new), removed `app/routers/sankey.py`
+- Frontend: removed `plotly.js`, `plotly.js-dist-min`, `react-plotly.js`,
+  `@types/react-plotly.js`, `src/lib/plot.ts`, `src/components/BudgetSankey.tsx`,
+  `src/components/FilterBar.tsx`
+- Frontend new: `src/components/StickyFilterBar.tsx`, `src/components/KpiRow.tsx`,
+  `src/components/charts/{ForecastAreaChart,GapByChannelChart,DriversWaterfall,SimulatorChart}.tsx`
+- All 7 pages rewritten to use `<StickyFilterBar />` + Recharts components
+- D-017 (Sankey hero) is now SUPERSEDED → 🟡
+
+**What we're explicitly choosing not to do:** the original "navigation
+hub with hero strip + 3 question cards" design (D-017) is gone. That was
+clever but unconventional. Dub-style analytics is what users recognize.
+
+---
+
 ## D-017 — Budget Sankey as the Overview hero visual (chose over treemap)
+🟡 SUPERSEDED by D-018 · removed in pivot to Dub-pattern UI
 🟢 Accepted · Phase 3
 
 **Originally planned ([PAGES.md / FRONTEND.md]):** Overview page = 4 KPI tiles + monthly area chart + top-3 problem SKU cards.

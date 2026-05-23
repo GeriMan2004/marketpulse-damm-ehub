@@ -12,6 +12,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
+import { StickyFilterBar } from "@/components/StickyFilterBar"
 import { usePromoROI } from "@/lib/hooks"
 import { formatHl, formatPercent, formatGBP, gapColor } from "@/lib/format"
 
@@ -19,13 +20,15 @@ export default function Promos() {
   const { data: roi, isLoading } = usePromoROI()
 
   return (
-    <div className="px-8 py-6 max-w-7xl mx-auto space-y-5">
-      <div>
-        <h1 className="text-2xl font-semibold">Promotion impact</h1>
-        <div className="text-sm text-muted-foreground">
+    <div className="px-8 pt-6 pb-12 max-w-7xl mx-auto">
+      <div className="mb-1">
+        <h1 className="text-xl font-semibold">Promotion impact</h1>
+        <div className="text-xs text-muted-foreground">
           Historical lift estimated by diff-in-diff against prior-12-month same-month baseline (GROCERY only).
         </div>
       </div>
+      <StickyFilterBar />
+      <div className="mt-5">
 
       {isLoading && <Skeleton className="w-full h-[400px]" />}
 
@@ -80,6 +83,7 @@ export default function Promos() {
           </CardContent>
         </Card>
       )}
+      </div>
     </div>
   )
 }
