@@ -71,6 +71,32 @@ resp = call_with_fallback("deep", messages=msgs, max_tokens=800, response_format
 
 ---
 
+## 🛟 Snapshot mode (offline demo safety)
+
+When the FE keyboard shortcut `⌘+.` flips snapshot mode on, the API client base URL swaps from `http://localhost:8000` to `/snapshots/` (static JSON served by Vite). Every endpoint has a parallel snapshot file:
+
+| Endpoint | Snapshot file |
+|---|---|
+| `GET /api/meta` | `frontend/public/snapshots/meta.json` |
+| `GET /api/kpis?…` | `frontend/public/snapshots/kpis.json` |
+| `GET /api/forecast?sku=K015600&sub_channel=GROCERY&granularity=month` | `frontend/public/snapshots/forecast__K015600__GROCERY__month.json` |
+| `GET /api/gap?…` | `frontend/public/snapshots/gap.json` |
+| `GET /api/drivers?…` | `frontend/public/snapshots/drivers__K015600__GROCERY__2026-11.json` |
+| `GET /api/promos/roi?…` | `frontend/public/snapshots/promo_roi.json` |
+| `POST /api/simulate` | `frontend/public/snapshots/simulate__<request_hash>.json` (hero presets only) |
+| `POST /api/recommend` | `frontend/public/snapshots/recommend__K015600__GROCERY__2026-11.json` |
+| `POST /api/chat` | not snapshotted — chat falls back to a hardcoded canned dialog (`frontend/src/components/chat/canned.ts`) |
+| `POST /api/explain-view` | `frontend/public/snapshots/explain__<page>__<filters_hash>.json` |
+
+`make snapshot` (see [Makefile](Makefile)) runs `backend/app/services/snapshot/build.py` which:
+1. Calls every endpoint with the **hero filters** (`ESTRELLA DAMM × GROCERY × 2026-11`) plus a handful of common variants.
+2. Writes the responses to `frontend/public/snapshots/`.
+3. Asserts every snapshot validates against its Pydantic schema before writing.
+
+The snapshot bundle is committed to the repo (it's anonymized output, not source data) so anyone cloning can run `make frontend` standalone and see a working demo.
+
+---
+
 ## 🧰 Tool catalog (smolagents)
 
 Tools are plain Python functions decorated with `@tool`. smolagents passes the docstring as the tool description to the model. Keep docstrings tight — they go into the system prompt.
@@ -124,6 +150,54 @@ def meta_lookup(kind: str) -> list[str]:
 ```
 
 Every tool returns a **Pydantic model**, never a free-form string. The agent therefore sees typed JSON and can chain calls without parsing.
+
+### Example outputs (what the agent actually sees)
+
+These anchor the LLM by showing concrete shape + units. They live in `backend/app/services/agent_examples.py` and are appended to the system prompt as `# Tool output examples` for one-shot grounding.
+
+```python
+# forecast("K015600", "GROCERY", 3)
+{
+  "sku": "K015600", "sub_channel": "GROCERY", "granularity": "month",
+  "points": [
+    {"period":"Sep.26","period_start":"2026-09-01","point":3812.0,"lo80":3401.0,"hi80":4255.0,"lo95":3180.0,"hi95":4501.0,"is_actual":false},
+    {"period":"Oct.26","period_start":"2026-10-01","point":3550.0,"lo80":3180.0,"hi80":3961.0,"lo95":2972.0,"hi95":4189.0,"is_actual":false},
+    {"period":"Nov.26","period_start":"2026-11-01","point":3942.0,"lo80":3520.0,"hi80":4401.0,"lo95":3290.0,"hi95":4660.0,"is_actual":false}
+  ]
+}
+
+# compare_vs_budget("K015600", "GROCERY", "Nov.26")
+{"sku":"K015600","sub_channel":"GROCERY","period":"Nov.26",
+ "forecast_hl":3942.0,"budget_hl":4112.0,
+ "gap_hl":-170.0,"gap_pct":-0.0413,"confidence":"medium"}
+
+# explain_gap("K015600", "GROCERY", "Nov.26", 3)
+[
+  {"feature":"Promo coverage weeks 47-48","shap_value":-92.4,"direction":"negative",
+   "explanation":"Planned multi-pack promo is shorter than the 2024 equivalent, removing ~92 Hl of expected lift."},
+  {"feature":"Weather forecast","shap_value":-48.1,"direction":"negative",
+   "explanation":"UK November temperatures are forecast 1.8°C below the 5-year average, depressing off-trade beer demand."},
+  {"feature":"Recent trend (3-month rolling)","shap_value":-29.5,"direction":"negative",
+   "explanation":"3-month rolling sales have softened vs the same window in 2024, contributing ~30 Hl of the gap."}
+]
+
+# rank_promos(channel="GROCERY", top_k=3)
+[
+  {"promo_type":"multi-pack","sub_channel":"GROCERY","avg_lift_pct":0.094,"avg_lift_hl":352.0,
+   "estimated_cost":12400.0,"roi":1.74,"n_observations":6,"confidence":"high"},
+  {"promo_type":"price-cut","sub_channel":"GROCERY","avg_lift_pct":0.071,"avg_lift_hl":268.0,
+   "estimated_cost":9800.0,"roi":1.31,"n_observations":5,"confidence":"medium"},
+  {"promo_type":"feature","sub_channel":"GROCERY","avg_lift_pct":0.039,"avg_lift_hl":147.0,
+   "estimated_cost":4200.0,"roi":1.68,"n_observations":4,"confidence":"medium"}
+]
+
+# simulate_promo("K015600", "GROCERY", ["Nov.26"], 10.0, "multi-pack")
+{"baseline":{...as forecast above...},
+ "simulated":{...with promo_active=1 on Nov.26...},
+ "gap_before_hl":-170.0,"gap_after_hl":-55.0,"gap_closed_pct":0.676,
+ "estimated_cost":12400.0,
+ "notes":"Multi-pack promo lift of +9.4% (historical avg) reduces the November shortfall from 4.1% to 1.3% under budget."}
+```
 
 ---
 

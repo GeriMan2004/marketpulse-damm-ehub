@@ -113,8 +113,25 @@ See **[FRONTEND.md](FRONTEND.md)** for the detailed component map. Highlights:
 
 ## 9. Storage
 
-- ⭐ **Parquet on disk** — raw data + pre-computed forecast snapshots (demo determinism).
-- ⭐ **MongoDB** (via the MongoDB MCP) — live demo state: forecasts, recommendations, chat history. Lets Claude query state directly during development.
+- ⭐ **Parquet on disk** — raw data + pre-computed forecast snapshots. See [DATA.md §6](DATA.md) for the snapshot file list.
+- ⭐ **MongoDB** (via the MongoDB MCP) — live demo state. Collections + indexes below.
+
+### MongoDB collections (database = `marketpulse`)
+
+| Collection | Document shape | Written by | Read by |
+|---|---|---|---|
+| `scenarios` | `{_id, sku, sub_channel, period, request: SimulationRequest, result: SimulationResult, created_at, source: "simulator"\|"agent"}` | `/api/simulate` save-as | `/api/scenarios`, `/recommendations` custom list |
+| `recommendations` | `{_id, sku, sub_channel, period, response: RecommendationResponse, model_used, latency_ms, created_at}` | `/api/recommend` | `/recommendations` (caches latest per key) |
+| `chat_sessions` | `{_id, session_id, messages: [{role, content, tool_calls:[…], created_at}], created_at, updated_at}` | `/api/chat` | `/chat` (history survives reload) |
+| `meta_cache` | `{_id:"filters", brands, skus, sub_channels, period_range, refreshed_at}` | `/api/meta` (cold start) | every page topbar |
+| `explain_view` | `{_id, page, filters_hash, summary: ExplainViewSummary, created_at}` | `/api/explain-view` | "Explain this view" sheet (60s cache per visible state) |
+
+Indexes:
+- `scenarios` → `{sku:1, sub_channel:1, period:1, created_at:-1}`
+- `recommendations` → unique `{sku:1, sub_channel:1, period:1}`
+- `chat_sessions` → `{session_id:1, updated_at:-1}`
+
+The MongoDB MCP gives Claude direct query access during development — verify saves without writing throwaway scripts.
 
 ---
 

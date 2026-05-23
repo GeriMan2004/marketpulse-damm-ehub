@@ -2,7 +2,32 @@
 
 One section per page. Each section has: hooks, data shape, layout, interactions, states, "Explain this view" payload, and a definition of done.
 
-Global topbar (every page): brand selector · SKU selector · channel selector · period range. Filters persist in the URL (`?brand=...&sku=...&channel=...&from=...&to=...`).
+## 🌐 Global filter contract (pinned)
+
+Every page reads the same topbar filters. **The "channel" filter maps to `CUSTOMERS.SubChannel`** — see [DATA.md §3](DATA.md) for the decision and the 6 allowed values.
+
+| URL param | Meaning | Type | Example | Multi? |
+|---|---|---|---|---|
+| `brand` | `MaterialData.Marca` | str | `ESTRELLA+DAMM` | no (single brand) |
+| `sku` | `MaterialData.Cod. Material` (first token) | str | `K015600` | no |
+| `sub_channel` | `CUSTOMERS.SubChannel` | enum | `GROCERY` | no |
+| `from` | period start (inclusive) | `YYYY-MM` | `2025-10` | no |
+| `to` | period end (inclusive) | `YYYY-MM` | `2026-12` | no |
+| `granularity` | `month` (default) or `week` | enum | `week` | no |
+
+Rules:
+- Missing filters apply "all" semantics (no constraint on that axis).
+- URL is the single source of truth; topbar reads/writes via `useSearchParams`.
+- A small Zustand store mirrors the URL for components that need imperative access (e.g. `<ExplainThisView />`).
+- Filter changes use `replace`, not `push`, so the back button doesn't fill with history noise.
+
+### Hero deep-link (memorize this for the demo)
+
+```
+http://localhost:5173/forecast?brand=ESTRELLA+DAMM&sub_channel=GROCERY&from=2026-04&to=2026-12
+```
+
+Reset filter button on the topbar points here.
 
 ---
 

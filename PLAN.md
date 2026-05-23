@@ -96,22 +96,30 @@ Everyone converges H22–H24 on the demo SKU narrative.
 ## ⏰ Hour-by-hour timeline
 
 ### H0–H2 · Setup & data understanding (team)
-- Repo: `backend/` + `frontend/`, `uv init` in backend, README skeleton
-- Backend engineer: `uv add fastapi uvicorn pydantic`; spin up `/api/meta` returning hardcoded data; confirm OpenAPI at `/docs`
-- Data engineer: load `UK DATA.xlsx` (sheets `DATABASE`, `MaterialData`, `CUSTOMERS`) + `Damm Trade Plan - promotions.xlsx` (per-retailer sheets) into Polars. **See [DATA.md](DATA.md) for column dictionary and ETL strategy.**
-- Granularity confirmed: **monthly primary** (sales data is monthly in `AÑO CALENDARIO`), **weekly secondary** (disaggregated using promo plan)
-- Target: `Hl` (hectoliters); secondary metric `Venta Neta` for ROI
-- Anonymize retailer names via `backend/app/services/anonymize.py`
-- **Exit:** typed Polars frames; join keys agreed; FastAPI hello-world live.
+- `make doctor` — verify HF token, uv, pnpm, raw data, mongo (see [Makefile](Makefile))
+- Repo: `backend/` + `frontend/`, `uv init` in `backend/`, `pnpm create vite@latest frontend -- --template react-ts`
+- Copy both Excel files to `backend/app/data/raw/` (gitignored)
+- `cp .env.example backend/.env`, fill `HF_TOKEN`
+- Backend engineer: scaffold FastAPI with the 8 endpoints stubbed (Pydantic schemas from [AGENT.md](AGENT.md)) returning mock data. `/docs` live.
+- Data engineer: skim the audit numbers in [DATA.md](DATA.md) — **don't re-do the EDA, it's already done**. Validate the audit by loading the file and confirming the row count, customer count, period range.
+- Granularity locked: **monthly primary** (`AÑO CALENDARIO`); weekly view = disaggregation for GROCERY only.
+- Target: `Hl`. Secondary: `Venta Neta`. Channel filter: `SubChannel` (6 values).
+- Hero pinned: **ESTRELLA DAMM × GROCERY** (see [DATA.md §7](DATA.md))
+- **Exit:** `make doctor` green; FastAPI returns mock data for all 8 endpoints; FE renders a placeholder Overview page reading from `/api/meta`.
 
 ### H2–H6 · ETL + external enrichment (data) · API scaffolding (backend)
-**Data engineer:**
-- Clean per [DATA.md](DATA.md): parse `Abr.25`-style periods, filter `Pais == "Reino Unido"`, join DATABASE × MaterialData × CUSTOMERS
-- Melt the wide promo Excel sheets into long `promos.parquet` (one row per channel × SKU × ISO week × event)
-- Build a wide monthly frame **and** a wide weekly frame (weekly = monthly disaggregated by promo plan)
-- Features: monthly lags (1, 3, 6, 12), rolling means (3, 6 months), UK holidays, Open-Meteo weather, pytrends, ONS retail index
-- Pandera validation; snapshot to Parquet
-- Push raw + enriched frames into MongoDB via the MCP for live querying
+**Data engineer:** *(full plan in [DATA.md](DATA.md))*
+- Parse `Abr.25`-style periods → month-start dates
+- Extract numeric IDs: `Cod. Cliente` → last segment; `Cod. Material` → first token
+- Filter `Pais == "Reino Unido"`, expect ~191/219 customers to join, ~25,389/25,714 rows
+- **Split actuals/budget rows** (`is_actual = Hl.notna() & Hl > 0`); 5,419 budget rows → `budgets.parquet`
+- **Net negative Hl** (returns) per `(cliente, material, month)` before training
+- Run anonymization per [DATA.md §5](DATA.md): retailer names → `Grocer A-E`, pubs → `Pubco A-D`, etc. Deterministic via `PYTHONHASHSEED=42`
+- **5 bespoke promo parsers** for Tesco / Sainsbury's / Waitrose / Morrisons / Asda (each sheet has a different layout) → one `promos.parquet`. Allocate ~2h to this specifically — it's the hardest ETL.
+- External enrichment: `holidays`, Open-Meteo, pytrends, ONS retail index → cached to `data/cache/*.parquet`
+- Pandera schema validates the wide monthly frame; channel must be one of the 6 enum values
+- Build `wide_monthly.parquet` (primary), `wide_weekly.parquet` (GROCERY only, disaggregated)
+- Write `meta.json` (brand/SKU/sub_channel/period lists for filter dropdowns)
 
 **Backend engineer (in parallel):**
 - All 8 endpoints stubbed with mock returns
@@ -121,18 +129,19 @@ Everyone converges H22–H24 on the demo SKU narrative.
 - **Exit:** frontend can call all 8 endpoints and get well-typed mock data.
 
 ### H6–H10 · Forecast engine (ML) · types flowing (frontend prep)
-**ML engineer:**
-- MLForecast + LightGBM with all features + exogenous (promos, budget)
-- StatsForecast AutoARIMA baseline
-- Chronos-Bolt zero-shot via `InferenceClient` per series (with caching to Parquet)
-- Ensemble: simple average first, weighted by validation MAPE if time
-- Prediction intervals (`level=[80, 95]`)
-- 12-week cross-validation → MAPE/SMAPE table
-- Hierarchical reconciliation (MinTrace) across SKU → brand → channel → total
+**ML engineer:** *(full spec in [ML.md](ML.md))*
+- Global MLForecast + LightGBM (quantile p10/p50/p90) trained across all 471 SKU×SubChannel series with static features (brand, sub_channel, pack, alc%, is_cmbc, months_since_first_sale)
+- CMBC carve-out: separate AutoARIMA model on the B2B distributor series, summed back at evaluation
+- StatsForecast AutoARIMA baseline at Brand × SubChannel level (82 series)
+- Chronos-Bolt zero-shot via HF Inference for cold-start + Moirai-1.1 on GROCERY series (accepts promo plan as covariate). Per-series cache → Parquet
+- Ensemble weights: constrained least squares on validation MAPE, **per-SubChannel × horizon**
+- Hierarchical reconciliation: `MinTrace(method='mint_shrink')` across SKU → Brand×SubChannel → SubChannel → SalesChannel → Total
+- Rolling-origin CV: 3 folds × 3-month horizon on Oct/Nov/Dec 2025; MAPE table written to `snapshots/mape.parquet`
+- Anomaly detection: STL residuals + 2.5×MAD on the 82 brand×subchannel series
 
 **Backend engineer:**
-- Wire `/api/forecast` and `/api/gap` to the real forecast service
-- **Exit:** `GET /api/forecast?sku=X&channel=Y&horizon=8` returns real numbers with intervals.
+- Wire `/api/forecast` and `/api/gap` to the forecast service (returns from `snapshots/forecast.parquet`)
+- **Exit:** `GET /api/forecast?sku=K015600&sub_channel=GROCERY&granularity=month` returns real points with intervals.
 
 ### H10–H13 · Analysis layers (ML) · simulator & agent (backend)
 **ML engineer:**
@@ -175,19 +184,18 @@ Everyone converges H22–H24 on the demo SKU narrative.
 
 ### H20–H22 · Polish + storytelling (team)
 - Chat page: Vercel AI SDK `useChat` against `/api/chat` SSE, tool-call breadcrumbs visible
-- Pre-compute forecast + recommendations into Parquet/Mongo so the demo doesn't depend on live HF calls (except chat)
-- Choose **one hero SKU** for the live narrative (see [DEMO.md](DEMO.md))
-- Hidden `⌘ + .` shortcut to swap between live and snapshot modes
-- Add tooltips: every chart has a one-liner explaining what it shows
-- Add a footer with documented data sources (checklist item)
+- **`make snapshot`** writes the offline JSON bundle (see [AGENT.md §Snapshot mode](AGENT.md)) — verify hero deep-link works in snapshot mode
+- Hero is **already pinned** to `ESTRELLA DAMM × GROCERY` — rehearse the narrative from [DEMO.md](DEMO.md)
+- Hidden `⌘ + .` shortcut wired and tested
+- Tooltips on every chart, footer with documented external sources
 - Fix the 5 worst-looking things in the UI
 
 ### H22–H24 · Repo polish + rehearsal (team)
-- `README.md` run instructions: `uv sync` → `uvicorn`, `pnpm install` → `pnpm dev`
-- `.env.example` for HF token + Mongo URI
-- Document every external source (ONS, Open-Meteo, Google Trends, holidays)
+- `make doctor` verifies a fresh clone runs (run on a teammate's machine)
+- Document every external source (ONS, Open-Meteo, Google Trends, holidays) in the footer + README
 - **Rehearse the demo end-to-end at least 3 times.** Time it; cut anything past 5 min.
-- Record a 2-min backup screen capture in case live demo breaks.
+- Record a 2-min backup screen capture (`demo/backup.mp4`) — not committed.
+- Pre-open both browser tabs on the demo machine. Don't restart live.
 
 ---
 
@@ -195,32 +203,43 @@ Everyone converges H22–H24 on the demo SKU narrative.
 
 | Risk | Mitigation |
 |---|---|
-| HF Inference slow / rate-limited | Cache to Parquet; AutoARIMA fallback; pre-bake demo data |
-| Data dirtier than expected | Don't optimize before H6; allocate slack |
-| Backend ↔ Frontend type drift | `openapi-fetch` regenerates types from `/openapi.json` after every backend change |
-| CORS / SSE issues | Open CORS in dev, locked in demo; test SSE early at H14 |
-| Frontend behind schedule | Cut Magic UI extras (BorderBeam, ShimmerButton, Marquee) — keep just NumberTicker. Plain shadcn + Tremor still looks great |
-| Streamlit-style scope creep on FE | Re-read FRONTEND.md every 4h |
-| Live demo dies | Backup video + snapshot mode + hero SKU pre-baked |
-| Two-process startup confusion at demo | One `make demo` script that starts both with logs |
+| Novita 429s on Kimi K2-Instruct | `call_with_fallback()` drops to Llama-Groq automatically; pre-bake recommendations to `snapshots/` at H22 |
+| Groq 429s on Llama-3.3 (chat) | Falls through to Qwen-2.5 (auto provider); chat has canned fallback dialog |
+| Promo ETL is harder than budgeted | 5 bespoke parsers, ~2h dedicated at H2–H4; can ship with 3 retailers if needed (Tesco + Sainsbury's + Asda cover the volume) |
+| 21% null Hl + negative Hl rows | Documented handling in [ML.md §0](ML.md) and [DATA.md §3](DATA.md) — split actuals/budget, net returns |
+| CMBC dominance distorts the model | Carve-out documented in [ML.md §3](ML.md); separate AutoARIMA series |
+| Cold-start SKUs (117 series ≤2 mo) | Global LightGBM + Chronos-Bolt + Moirai ensemble (see [ML.md §3](ML.md)) |
+| Hierarchical reconciliation breaks dashboard sums | Assertion in test: `(children.sum() - parent).abs() < 0.001` per node |
+| Backend ↔ Frontend type drift | `make types` regenerates from `/openapi.json` after every backend change |
+| CORS / SSE issues | Open CORS in dev; test SSE end-to-end at H14, not at H20 |
+| Frontend behind schedule | Cut Magic UI extras — keep just `NumberTicker`. Plain shadcn + Tremor still looks great |
+| Scope creep on FE | Re-read FRONTEND.md every 4h; the page list is closed at 7 |
+| Live demo dies | Backup video + snapshot mode + hero deep-link |
+| Two-process startup confusion at demo | `make demo` starts both with interleaved logs |
+| Anonymization drift between runs | `PYTHONHASHSEED=42` enforced in Makefile and .env.example |
 
 ---
 
 ## 🟢 Done = checklist (matches brief exactly)
 
-- [ ] Repository includes clear run instructions
-- [ ] Demo shows weekly **and** monthly forecast
-- [ ] Solution compares forecast against budget or target
-- [ ] Solution includes promotions in the analysis
-- [ ] Tool explains **why** deviations happen (SHAP + LLM narrative)
-- [ ] Demo recommends actions to move closer to target (3 scenarios)
-- [ ] External sources used are documented (footer + README)
+- [ ] `make doctor` green on a fresh clone
+- [ ] `make demo` starts both servers with no extra steps
+- [ ] Demo shows monthly forecast (primary) AND weekly view for GROCERY (disaggregated)
+- [ ] Forecast compared against budget — gap KPI on Overview, gap table on `/forecast`
+- [ ] Promotions analyzed: causal lift per `(promo_type, channel)`, ROI ranking on `/promos`
+- [ ] Tool explains **why** deviations happen — SHAP waterfall + LLM narrative on `/drivers`
+- [ ] Demo recommends actions — 3 scenarios on `/recommendations` (conservative/balanced/aggressive)
+- [ ] External sources documented in footer + README + DATA.md §5
 
 Plus our edges:
-- [ ] Hierarchical reconciliation across SKU → brand → channel → total
-- [ ] Prediction intervals on every forecast
-- [ ] What-if promo simulator working live
-- [ ] Promo ROI ranking
-- [ ] LLM exec-summary button on every page
-- [ ] Foundation-model forecast (Chronos-Bolt) integrated
+- [ ] Hierarchical reconciliation across SKU → Brand×SubChannel → SubChannel → SalesChannel → Total (assertion test passes)
+- [ ] Prediction intervals (p10/p90) on every forecast point, rendered as confidence band
+- [ ] What-if promo simulator working live on `/simulator` for GROCERY series
+- [ ] Promo ROI ranking with CausalImpact confidence levels
+- [ ] "Explain this view" button on every data page
+- [ ] Two foundation models integrated: Chronos-Bolt (cold-start) + Moirai-1.1 (GROCERY with covariates)
+- [ ] Snapshot mode (`⌘+.`) verified — frontend works fully offline
 - [ ] React frontend with shadcn + Magic UI polish (flat, all MIT)
+- [ ] Anonymization stable across runs (`PYTHONHASHSEED=42`)
+- [ ] MongoDB scenarios + chat history persisted
+- [ ] Backup video recorded
