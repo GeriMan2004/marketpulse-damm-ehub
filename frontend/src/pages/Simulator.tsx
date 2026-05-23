@@ -15,7 +15,7 @@
 
 import { useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
-import Plot from "react-plotly.js"
+import Plot from "@/lib/plot"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NumberTicker } from "@/components/ui/number-ticker"

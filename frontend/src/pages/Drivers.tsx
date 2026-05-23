@@ -11,7 +11,7 @@
  */
 
 import { useSearchParams } from "react-router-dom"
-import Plot from "react-plotly.js"
+import Plot from "@/lib/plot"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"

@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { BrowserRouter, Routes, Route } from "react-router-dom"
 
+import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { AppShell } from "@/components/AppShell"
 import Overview from "@/pages/Overview"
 import Forecast from "@/pages/Forecast"
@@ -26,20 +27,22 @@ export default function App() {
   }
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Routes>
-          <Route element={<AppShell />}>
-            <Route index element={<Overview />} />
-            <Route path="forecast" element={<Forecast />} />
-            <Route path="drivers" element={<Drivers />} />
-            <Route path="promos" element={<Promos />} />
-            <Route path="simulator" element={<Simulator />} />
-            <Route path="recommendations" element={<Recommendations />} />
-            <Route path="chat" element={<Chat />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <Routes>
+            <Route element={<AppShell />}>
+              <Route index element={<Overview />} />
+              <Route path="forecast" element={<Forecast />} />
+              <Route path="drivers" element={<Drivers />} />
+              <Route path="promos" element={<Promos />} />
+              <Route path="simulator" element={<Simulator />} />
+              <Route path="recommendations" element={<Recommendations />} />
+              <Route path="chat" element={<Chat />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </QueryClientProvider>
+    </ErrorBoundary>
   )
 }

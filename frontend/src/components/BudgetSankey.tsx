@@ -13,7 +13,7 @@
  * A treemap shows volume well but hides the hierarchy.
  */
 
-import Plot from "react-plotly.js"
+import Plot from "@/lib/plot"
 import { useNavigate } from "react-router-dom"
 import { useSankey, useMeta } from "@/lib/hooks"
 import { Skeleton } from "@/components/ui/skeleton"
