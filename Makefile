@@ -109,7 +109,7 @@ data:
 	cd $(BE) && $(PY) -m app.services.etl
 
 train: data
-	cd $(BE) && $(PY) -m app.services.forecast.train
+	cd $(BE) && $(PY) -u -m app.services.forecast.train
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Individual servers
