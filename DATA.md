@@ -26,9 +26,9 @@
 
 **Quality**
 
-- **21.3% of UK rows have null `Hl`** → these are budget/plan rows mixed into the same fact table. Tag and split (`is_actual = Hl.notna() and Hl > 0`).
+- **21.3% of UK rows have null `Hl`** → originally assumed to be a budget plan, but the live audit showed they're **accounting adjustments** (returns, credit notes, fee allocations) spread across all 4 years, mostly with negative `Venta Neta`. They're not a forecastable target. Dropped in ETL. *(See "Targets are derived" below for the replacement.)*
 - **1,186 rows with negative Hl** → returns / credit notes. Net them against `(cliente, material, month)` before training.
-- **`Mktg Fund` is 100% null** → don't use this column.
+- **`Mktg Fund` and `Otros Imp.` are 100% null** → never use these columns.
 
 **Volume map**
 
@@ -212,17 +212,18 @@ def extract_material(s):    # "K015600 CERVEZA..." → "K015600"
     return str(s).strip().split()[0]
 ```
 
-### Step 3: split actuals from budget rows
+### Step 3: drop the null-Hl accounting noise
 
 ```python
-df = df.with_columns(
-    is_actual = pl.col("Hl").is_not_null() & (pl.col("Hl") > 0),
-    is_budget = pl.col("Hl").is_null(),
-    is_return = pl.col("Hl") < 0,
-)
+actuals = sales.filter(pl.col("Hl").is_not_null())
 ```
 
-The forecaster trains only on `is_actual`. The budget figures (extracted from the same sheet — Damm puts plan rows in there with `Hl=null`) are surfaced via a separate `budgets.parquet`.
+The null-Hl rows were originally assumed to be a "budget" plan, but auditing
+their column profile showed they're accounting adjustments — present in
+every year, with negative `Venta Neta`, 100% null `Mktg Fund`, etc. They
+are not a future plan. Dropped.
+
+A target series is derived separately (see "Targets" below).
 
 ### Step 4: net returns
 
@@ -266,9 +267,32 @@ schema.validate(sales)
 
 ---
 
-## 4. Per-retailer promo parsers
+## 3b. Targets (derived, not in source data)
 
-The promo file sheets each look different. One parser per sheet, dispatched by name.
+Because there is no budget plan in the source file, we derive a target_hl
+series per `(material_id, sub_channel, date)`:
+
+```python
+target_hl = coalesce(
+    prior_year_actual_hl,                 # same SKU/channel 12 months earlier
+    trailing_3_month_median(actual_hl),   # cold-start fallback
+)
+```
+
+Written to `snapshots/targets.parquet` with columns:
+- `material_id`, `sub_channel`, `date`, `target_hl`
+- `target_source` ∈ `{"prior_year", "trailing_median"}` — surfaced on the FE
+  so the user can see when a target is derived from a less-confident source
+
+This is the most defensible baseline absent a real plan. Growth-% multipliers
+can be applied per-brand later as a config knob.
+
+---
+
+## 4. Per-retailer promo parsers (per-sheet structural, not heuristic)
+
+The promo file sheets each look different. **Five bespoke parsers, one per sheet.**
+The cell content classifier is **content-based** (not event-name-based).
 
 ### `parse_tesco(sheet) -> long_df`
 
@@ -313,23 +337,40 @@ The promo file sheets each look different. One parser per sheet, dispatched by n
   2. Parse date ranges from row 0.
   3. Melt and expand to weekly.
 
-### Common output schema
+### Cell content classifier (data-driven, 7 mutually exclusive types)
 
-```python
-PROMOS_SCHEMA = pa.DataFrameSchema({
-    "channel":      pa.Column(str),               # always anonymized retailer label, e.g. "Grocer A"
-    "sku":          pa.Column(str, nullable=True),
-    "iso_week":     pa.Column(pa.Date),
-    "event_label":  pa.Column(str),
-    "promo_type":   pa.Column(str, pa.Check.isin([
-        "multi-pack","price-cut","feature","display","off-invoice","other"
-    ])),
-    "discount_pct": pa.Column(float, nullable=True),
-    "notes":        pa.Column(str, nullable=True),
-})
+Each cell is classified from its actual content, not from event-name guesses.
+The seven types are exhaustive across every cell observed in all 5 sheets:
+
+| `promo_type` | Trigger | Example cells |
+|---|---|---|
+| `regular` | bare price | `13`, `5.75`, `£12` |
+| `multi-buy` | "X for £Y" or "MTB" | `"2 for £23"`, `"3 for £6.50"`, `"MTB 4f£7.50"` |
+| `price-cut` | price ≥10% below SKU's baseline median | `13` when SKU baseline is `18` |
+| `rollback` | "RB" string | `"RB £12/2 for £20"` |
+| `clearance` | "WIGIG" string | `"£11.00 WIGIG"` |
+| `listing` | "LAUNCH" or "SKU replacement" | `"LAUNCH "`, `"SKU replacement"` |
+| `no-listing` | cell empty | (SKU not stocked that week) |
+
+`on_promo` is a boolean derived from `promo_type ∈ {multi-buy, price-cut, rollback, clearance}`.
+
+### Output schema (`snapshots/promos.parquet`)
+
+```
+channel             str         anonymized retailer ("Grocer A".."Grocer E")
+sku                 str         SKU label as written in the retailer's sheet
+iso_week            date        Monday of the ISO week
+week_number         int|null    retailer's week number (when present)
+price_gbp           float|null  price extracted from the cell (None for multi-buy cells)
+multi_buy_offer     str|null    raw offer string ("2 for £23", "MTB ...")
+promo_type          str         one of the 7 types above
+on_promo            bool        true for {multi-buy, price-cut, rollback, clearance}
+baseline_price_gbp  float|null  median of this SKU's regular-price cells in the channel
+raw_value           str         exact original cell content
 ```
 
-Written to `backend/app/data/snapshots/promos.parquet`.
+Sanity-checked in `validate_promos()`: an assertion fails if any cell escapes the
+7-type taxonomy. No silent "other" bucket.
 
 ---
 
@@ -353,16 +394,15 @@ External fetches are cached to `backend/app/data/cache/{source}.parquet` and onl
 ```
 backend/app/data/snapshots/
 ├── wide_monthly.parquet     # one row per (sku, sub_channel, month) — primary training table
-├── wide_weekly.parquet      # disaggregated, for the GROCERY weekly view
-├── promos.parquet           # all retailers, long form
-├── budgets.parquet          # extracted from null-Hl DATABASE rows
-├── forecast.parquet         # ensemble + reconciled, with p10/p50/p90
-├── anomalies.parquet        # STL-flagged historical anomalies
-├── promo_roi.parquet        # CausalImpact results per (promo_type, channel)
-└── meta.json                # brand, sku, channel value lists for filters
+├── targets.parquet          # derived target_hl + target_source — replaces "budgets" (see §3b)
+├── promos.parquet           # one row per (channel, sku, iso_week) with content-classified promo_type
+├── forecast.parquet         # ensemble + reconciled, with p10/p50/p90  (written by `make train`)
+├── anomalies.parquet        # STL-flagged historical anomalies        (written by `make train`)
+├── promo_roi.parquet        # CausalImpact per (promo_type, channel)   (written by `make train`)
+└── meta.json                # brand, sku, channel value lists + hero SKU
 ```
 
-All gitignored. Re-creatable from raw via `make data`.
+All gitignored. Re-creatable from raw via `make data` (and `make train` for the ML outputs).
 
 ---
 

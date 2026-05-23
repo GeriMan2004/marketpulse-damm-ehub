@@ -8,8 +8,11 @@ Inputs (under backend/app/data/raw/, gitignored):
 
 Outputs (under backend/app/data/snapshots/, also gitignored):
 - wide_monthly.parquet     SKU × SubChannel × month — the primary training table
-- budgets.parquet          extracted from null-Hl DATABASE rows (the plan)
-- promos.parquet           long-form, one row per (channel, sku, iso_week, event)
+- targets.parquet          target_hl per SKU × sub_channel × month (derived from
+                            prior-year actuals; replaces the misleading null-Hl
+                            "budget" rows — those are accounting noise, not a plan)
+- promos.parquet           one row per (channel, sku, iso_week), with structured
+                            promo_type classified from cell content
 - meta.json                brand / SKU / sub_channel / period lists for FE filters
 
 Pipeline steps live in module-level functions so they're individually
@@ -21,7 +24,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Final
 
@@ -51,6 +54,19 @@ ALLOWED_SUB_CHANNELS: Final[set[str]] = {
 SPA_MONTH: Final[dict[str, int]] = {
     "Ene": 1, "Feb": 2, "Mar": 3, "Abr": 4, "May": 5, "Jun": 6,
     "Jul": 7, "Ago": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dic": 12,
+}
+
+# Promo type taxonomy — derived from observation of every cell value in all
+# 5 retailer sheets (see audit in commit message). Each type is mutually
+# exclusive and grounded in cell content, not heuristic guesses.
+PROMO_TYPES: Final[set[str]] = {
+    "regular",      # bare number — normal shelf price, not a promo
+    "multi-buy",    # "X for £Y", "MTB ...", "2f£Y"
+    "price-cut",    # price below this SKU's baseline median by ≥10%
+    "rollback",     # "RB £X"
+    "clearance",    # "WIGIG £X" — when-it's-gone-it's-gone
+    "listing",      # "LAUNCH", "SKU replacement"
+    "no-listing",   # cell empty — SKU not stocked that week
 }
 
 
@@ -89,7 +105,6 @@ def extract_material(s: str | None) -> str | None:
 
 
 def extract_customer_name(s: str | None) -> str | None:
-    """`1/1/91/117738 CARLSBERG SUPPLY COMPANY AG` → `CARLSBERG SUPPLY COMPANY AG`."""
     if not s:
         return None
     try:
@@ -101,7 +116,7 @@ def extract_customer_name(s: str | None) -> str | None:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Loaders
+# Loaders — sales side
 # ────────────────────────────────────────────────────────────────────────────
 
 def load_sales_raw() -> pl.DataFrame:
@@ -114,24 +129,19 @@ def load_sales_raw() -> pl.DataFrame:
         pl.col("Cod. Material").map_elements(extract_material, return_dtype=pl.String).alias("material_id"),
         pl.col("Cod. Cliente").map_elements(extract_customer_name, return_dtype=pl.String).alias("customer_name_raw"),
     )
-    # Drop rows where the time parse failed — they're junk
     out = out.filter(pl.col("date").is_not_null())
     print(f"  · after period parse: {len(out):,} rows ({out['date'].min()} → {out['date'].max()})")
     return out
 
 
 def load_customers_uk() -> pl.DataFrame:
-    """Load CUSTOMERS sheet, filter to UK, anonymize the customer group names."""
     df = pl.read_excel(SALES_XLSX, sheet_name="CUSTOMERS")
-    print(f"  · CUSTOMERS: {len(df)} rows total")
     uk = df.filter(pl.col("Pais") == "Reino Unido")
-    print(f"  · UK only:   {len(uk)} rows")
-    # Validate SubChannel domain
     sub_values = set(uk["SubChannel"].drop_nulls().unique().to_list())
     unexpected = sub_values - ALLOWED_SUB_CHANNELS
     if unexpected:
         print(f"  ! unexpected SubChannel values (will be dropped from final): {unexpected}")
-    out = uk.with_columns(
+    return uk.with_columns(
         pl.col("Agrupacion BU3").map_elements(anonymize, return_dtype=pl.String).alias("customer_anon"),
     ).select(
         pl.col("Cod. Cliente").alias("cliente_id"),
@@ -140,17 +150,13 @@ def load_customers_uk() -> pl.DataFrame:
         pl.col("Agrupacion BU3").alias("agrupacion_raw"),
         "customer_anon",
     )
-    return out
 
 
 def load_materials() -> pl.DataFrame:
-    """Load MaterialData, drop junk cols, normalize the material code."""
     df = pl.read_excel(SALES_XLSX, sheet_name="MaterialData")
-    print(f"  · MaterialData: {len(df)} rows")
-    # Drop Unnamed: * columns (they're all-null junk)
     keep = [c for c in df.columns if not c.startswith("Unnamed")]
     df = df.select(keep)
-    out = df.with_columns(
+    return df.with_columns(
         pl.col("Cod. Material").cast(pl.String).str.strip_chars().alias("material_id"),
     ).select(
         "material_id",
@@ -161,26 +167,29 @@ def load_materials() -> pl.DataFrame:
         pl.col("PACK SIZE").alias("pack_size"),
         pl.col("ALC. %").alias("alc_pct"),
         pl.col("L por SKU").alias("litres_per_sku"),
-    ).unique(subset=["material_id"], keep="first")  # dedupe; some SKUs appear multiple times
-    return out
+    ).unique(subset=["material_id"], keep="first")
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Transforms
+# Sales transforms
 # ────────────────────────────────────────────────────────────────────────────
 
-def split_actuals_budget(sales: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Null Hl rows are budget/plan; non-null are actuals. Returns (actuals, budget)."""
+def filter_actuals(sales: pl.DataFrame) -> pl.DataFrame:
+    """Keep only rows that represent real sales volume.
+
+    Null-Hl rows in this dataset turn out to be accounting adjustments
+    (returns, credit notes, fee allocations) spread across all years, NOT a
+    planned budget — see DATA.md audit. We drop them.
+    """
     actuals = sales.filter(pl.col("Hl").is_not_null())
-    budget  = sales.filter(pl.col("Hl").is_null())
-    print(f"  · actuals: {len(actuals):,}  ·  budget rows: {len(budget):,}")
-    return actuals, budget
+    n_neg = (actuals["Hl"] < 0).sum()
+    print(f"  · null-Hl rows dropped (accounting noise, not budget): {len(sales) - len(actuals):,}")
+    print(f"  · negative-Hl rows that will be netted: {n_neg:,}")
+    return actuals
 
 
 def net_returns(actuals: pl.DataFrame) -> pl.DataFrame:
-    """Net negative Hl (returns/credit notes) against same (cliente, material, month)."""
-    n_neg = (actuals["Hl"] < 0).sum()
-    print(f"  · negative Hl rows pre-net: {n_neg:,}")
+    """Net negative Hl against same (cliente, material, month). Drop where net ≤ 0."""
     netted = (
         actuals
         .group_by(["cliente_id", "material_id", "date"])
@@ -189,18 +198,17 @@ def net_returns(actuals: pl.DataFrame) -> pl.DataFrame:
             pl.col("Venta Neta").sum().alias("revenue_gbp"),
             pl.col("Margen Bruto").sum().alias("margin_gbp"),
         )
-        .filter(pl.col("Hl") > 0)  # drop where net is zero or negative
+        .filter(pl.col("Hl") > 0)
     )
     print(f"  · after net+filter: {len(netted):,} rows")
     return netted
 
 
 def join_uk(actuals_netted: pl.DataFrame, customers_uk: pl.DataFrame, materials: pl.DataFrame) -> pl.DataFrame:
-    """Inner-join netted actuals to UK customers and material master."""
     joined = (
         actuals_netted
         .join(customers_uk, on="cliente_id", how="inner")
-        .join(materials,    on="material_id", how="inner")
+        .join(materials, on="material_id", how="inner")
         .filter(pl.col("sub_channel").is_in(list(ALLOWED_SUB_CHANNELS)))
     )
     print(f"  · joined UK: {len(joined):,} rows  ·  "
@@ -211,8 +219,7 @@ def join_uk(actuals_netted: pl.DataFrame, customers_uk: pl.DataFrame, materials:
 
 
 def aggregate_monthly(joined: pl.DataFrame) -> pl.DataFrame:
-    """SKU × SubChannel × month, summed Hl/revenue/margin. The main training table."""
-    monthly = (
+    return (
         joined
         .group_by(["material_id", "brand", "sub_channel", "sales_channel", "date"])
         .agg(
@@ -223,193 +230,427 @@ def aggregate_monthly(joined: pl.DataFrame) -> pl.DataFrame:
             (pl.col("customer_anon") == "Distributor (B2B)").any().alias("has_cmbc"),
         )
         .with_columns(
-            # static features useful later for ML
             pl.col("date").dt.month().alias("month"),
             pl.col("date").dt.quarter().alias("quarter"),
             pl.col("date").dt.year().alias("year"),
         )
         .sort(["material_id", "sub_channel", "date"])
     )
-    print(f"  · monthly grain: {len(monthly):,} rows ({monthly['material_id'].n_unique()} SKUs × {monthly['sub_channel'].n_unique()} subchannels)")
-    return monthly
 
 
-def build_budgets(budget: pl.DataFrame, customers_uk: pl.DataFrame, materials: pl.DataFrame) -> pl.DataFrame:
-    """The null-Hl rows are the plan. Same grain as monthly, but for the budget series."""
-    if len(budget) == 0:
-        return pl.DataFrame(schema={
-            "material_id": pl.String, "sub_channel": pl.String, "date": pl.Date,
-            "budget_hl": pl.Float64,
-        })
-    # Some budget rows lack PVE or other figures — use whatever numeric we have as a proxy.
-    # If Damm encodes the planned Hl in another column (e.g. one of the IIEE/PVE), we'll
-    # discover it in EDA; for now we surface the row count and any usable hint.
-    out = (
-        budget
-        .filter(pl.col("cliente_id").is_not_null() & pl.col("material_id").is_not_null())
-        .join(customers_uk, on="cliente_id", how="inner")
-        .join(materials, on="material_id", how="inner")
-        .filter(pl.col("sub_channel").is_in(list(ALLOWED_SUB_CHANNELS)))
-        .with_columns(
-            # Placeholder until the budget magnitude column is confirmed during EDA.
-            # `Venta Neta` is non-null on many budget rows; treat it as the planned revenue
-            # and surface it for now — ML will use a confirmed budget_hl column later.
-            pl.col("Venta Neta").alias("planned_revenue_gbp"),
-        )
-        .group_by(["material_id", "brand", "sub_channel", "date"])
-        .agg(
-            pl.col("planned_revenue_gbp").sum(),
-            pl.lit(0.0).alias("budget_hl"),  # TODO: confirm budget Hl column in EDA
-        )
-        .sort(["material_id", "sub_channel", "date"])
+def derive_targets(monthly: pl.DataFrame) -> pl.DataFrame:
+    """Build a target_hl series per (material, sub_channel, date).
+
+    There is no explicit budget in UK DATA.xlsx — the null-Hl rows turned out
+    to be accounting adjustments, not a plan (see DATA.md). For forecast-vs-
+    target comparison we derive a target from prior-year same-month actuals:
+
+        target_hl[m] = actual_hl[m - 12]                if m - 12 exists
+                     = trailing-3-month median × 1.0    otherwise (cold-start)
+
+    This is explicitly a *derived* target. The dashboard surfaces this clearly
+    via target_source ∈ {"prior_year", "trailing_median"}.
+
+    Why prior-year-actuals: in CPG, monthly budgets are typically set as
+    "match last year ± growth %". Using prior-year actuals as the target is
+    the most defensible baseline absent a real plan. Growth % can be applied
+    per-brand later as a config knob.
+    """
+    base = monthly.select(["material_id", "sub_channel", "date", "Hl"])
+
+    # Prior-year join — date minus 12 months
+    prior = base.with_columns(
+        target_date=pl.col("date").dt.offset_by("12mo"),
+    ).select(
+        pl.col("material_id"),
+        pl.col("sub_channel"),
+        pl.col("target_date").alias("date"),
+        pl.col("Hl").alias("prior_year_hl"),
     )
-    print(f"  · budget rows after UK join: {len(out):,}")
+
+    targets = base.join(prior, on=["material_id", "sub_channel", "date"], how="left")
+
+    # Trailing-3-month median per (material, sub_channel) as cold-start fallback
+    trailing = (
+        base.sort(["material_id", "sub_channel", "date"])
+        .with_columns(
+            trailing_med=pl.col("Hl")
+                .rolling_median(window_size=3, min_samples=1)
+                .over(["material_id", "sub_channel"]),
+        )
+        .select("material_id", "sub_channel", "date", "trailing_med")
+    )
+
+    out = targets.join(trailing, on=["material_id", "sub_channel", "date"], how="left").with_columns(
+        target_hl=pl.coalesce(["prior_year_hl", "trailing_med"]),
+        target_source=pl.when(pl.col("prior_year_hl").is_not_null())
+            .then(pl.lit("prior_year"))
+            .otherwise(pl.lit("trailing_median")),
+    ).select("material_id", "sub_channel", "date", "target_hl", "target_source")
+
+    n_prior = (out["target_source"] == "prior_year").sum()
+    n_trail = (out["target_source"] == "trailing_median").sum()
+    print(f"  · targets: {len(out):,} rows · prior_year={n_prior:,} · trailing_median={n_trail:,}")
     return out
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Promo parsing (5 retailer-specific layouts — best-effort first pass)
+# Promo parsing — per-retailer structural parsers + content-based classifier
 # ────────────────────────────────────────────────────────────────────────────
 
 @dataclass
-class PromoRow:
-    channel: str           # anonymized retailer
-    sku: str | None
-    iso_week: date | None
-    event_label: str
-    promo_type: str        # multi-pack | price-cut | feature | display | off-invoice | other
-    discount_pct: float | None
-    notes: str | None
+class PromoCell:
+    channel: str
+    sku: str            # SKU label as written in the retailer's sheet
+    iso_week: date      # Monday of the ISO week
+    week_number: int | None
+    price_gbp: float | None
+    multi_buy_offer: str | None      # raw string e.g. "2 for £23"
+    cell_kind: str                   # 'price' | 'multi-buy' | 'rollback' | 'clearance' | 'listing' | 'other'
+    raw_value: str                   # exact original cell content
 
 
-def _classify_event(label: str) -> str:
-    """Best-effort tag from the event label text."""
-    l = label.lower()
-    if any(k in l for k in ["multi", "multibuy", "mpu", "mpf", "2 for", "3 for"]):
-        return "multi-pack"
-    if any(k in l for k in ["price drop", "great value", "rollback", "save", "-£", "% off"]):
-        return "price-cut"
-    if any(k in l for k in ["feature", "endcap", "tpr", "front of"]):
-        return "feature"
-    if "display" in l or "secondary" in l:
-        return "display"
-    if "off-invoice" in l or "off invoice" in l:
-        return "off-invoice"
-    return "other"
+# Cell-content classification regex set — exact strings observed in the sheets
+RE_MONEY_FOR     = re.compile(r"(\d+)\s*(?:for|f)\s*£\s*([\d.]+)", re.I)
+RE_MTB           = re.compile(r"\bMTB\b", re.I)            # "Multi-Tier Buy"
+RE_ROLLBACK      = re.compile(r"\b(?:RB|rollback|roll back)\b\s*£?\s*([\d.]+)?", re.I)
+RE_CLEARANCE     = re.compile(r"\bWIGIG\b", re.I)          # When-It's-Gone-It's-Gone
+RE_LAUNCH        = re.compile(r"\b(LAUNCH|SKU replacement|new listing)\b", re.I)
+RE_PRICE         = re.compile(r"^£?\s*\d+(?:\.\d+)?$")
+
+
+def _classify_cell(value) -> tuple[str, float | None, str | None]:
+    """Return (cell_kind, price_gbp, multi_buy_offer) for one cell.
+
+    - bare number → ('price', float, None)
+    - "X for £Y"  → ('multi-buy', None, raw string)
+    - "MTB ..."   → ('multi-buy', None, raw string)
+    - "RB £X"     → ('rollback', float|None, None)
+    - "WIGIG £X"  → ('clearance', float|None, None)
+    - "LAUNCH"    → ('listing', None, None)
+    - other       → ('other', None, None)
+    """
+    if isinstance(value, (int, float)):
+        return ("price", float(value), None)
+    s = str(value).strip()
+    if not s:
+        return ("other", None, None)
+    if RE_PRICE.match(s):
+        return ("price", float(s.lstrip("£")), None)
+    if RE_LAUNCH.search(s):
+        return ("listing", None, None)
+    if RE_CLEARANCE.search(s):
+        m = re.search(r"£\s*([\d.]+)", s)
+        return ("clearance", float(m.group(1)) if m else None, s)
+    if RE_ROLLBACK.search(s):
+        m = re.search(r"£\s*([\d.]+)", s)
+        return ("rollback", float(m.group(1)) if m else None, s)
+    if RE_MONEY_FOR.search(s) or RE_MTB.search(s):
+        return ("multi-buy", None, s)
+    return ("other", None, s)
+
+
+def _iso_monday(d: datetime | date) -> date:
+    """Snap any date to the Monday of its ISO week."""
+    if isinstance(d, datetime):
+        d = d.date()
+    return d - timedelta(days=d.weekday())
+
+
+def _parse_dd_mm_range(s: str, default_year: int) -> tuple[date, date] | None:
+    """Parse '01/01-20/01' → (Mon of 2026-01-01, Mon of 2026-01-20)."""
+    m = re.match(r"\s*(\d{1,2})/(\d{1,2})\s*[-–]\s*(\d{1,2})/(\d{1,2})\s*", s)
+    if not m:
+        return None
+    d1, mo1, d2, mo2 = (int(x) for x in m.groups())
+    try:
+        return _iso_monday(date(default_year, mo1, d1)), _iso_monday(date(default_year, mo2, d2))
+    except ValueError:
+        return None
+
+
+def _iter_weeks(start: date, end: date):
+    """Yield ISO-Monday dates from start to end inclusive."""
+    cur = start
+    while cur <= end:
+        yield cur
+        cur = cur + timedelta(days=7)
+
+
+# Per-retailer parsers — each understands its own sheet's exact structure
+# (rows/columns identified by manual audit). They all return list[PromoCell].
+
+def _parse_grid_with_week_row(ws, channel: str,
+                              week_row_idx: int,
+                              date_row_idx: int,
+                              sku_label_col: int,
+                              first_data_col: int,
+                              first_data_row: int) -> list[PromoCell]:
+    """
+    Generic parser for the common 'wide grid' layout used by Tesco, Sainsbury's,
+    and Waitrose:
+
+    - one row of period codes (P1/P13/C1...)
+    - one row of week-start datetimes
+    - one row of week numbers (optional)
+    - SKU label column on the left
+    - matrix of (SKU × week) price/promo cells
+
+    Caller passes the exact row indexes (zero-based) after a per-sheet audit.
+    """
+    rows = list(ws.values)
+    if date_row_idx >= len(rows) or week_row_idx >= len(rows):
+        return []
+    date_row = rows[date_row_idx]
+    week_row = rows[week_row_idx] if 0 <= week_row_idx < len(rows) else [None] * len(date_row)
+
+    # Build week-index → (iso_monday, week_number)
+    week_columns: list[tuple[int, date, int | None]] = []
+    for j, cell in enumerate(date_row):
+        if j < first_data_col:
+            continue
+        if isinstance(cell, (datetime, date)):
+            wn = week_row[j] if j < len(week_row) else None
+            if isinstance(wn, (int, float)):
+                wn = int(wn)
+            elif isinstance(wn, str) and wn.strip().isdigit():
+                wn = int(wn.strip())
+            else:
+                wn = None
+            week_columns.append((j, _iso_monday(cell), wn))
+    if not week_columns:
+        return []
+
+    out: list[PromoCell] = []
+    for row in rows[first_data_row:]:
+        if not row:
+            continue
+        sku_cell = row[sku_label_col] if sku_label_col < len(row) else None
+        if not isinstance(sku_cell, str) or not sku_cell.strip():
+            continue
+        sku = sku_cell.strip()
+        for j, iso_mon, wn in week_columns:
+            if j >= len(row):
+                continue
+            val = row[j]
+            if val is None:
+                # Empty cell → SKU not listed that week
+                out.append(PromoCell(
+                    channel=channel, sku=sku, iso_week=iso_mon, week_number=wn,
+                    price_gbp=None, multi_buy_offer=None, cell_kind="other", raw_value=""
+                ))
+                continue
+            kind, price, offer = _classify_cell(val)
+            out.append(PromoCell(
+                channel=channel, sku=sku, iso_week=iso_mon, week_number=wn,
+                price_gbp=price, multi_buy_offer=offer, cell_kind=kind,
+                raw_value=str(val).strip(),
+            ))
+    return out
+
+
+def _parse_tesco(ws) -> list[PromoCell]:
+    """Tesco: header rows 0-1 = event labels (ignored — those are retailer
+    promo-calendar event tags, not Damm classifications). Period codes row 2,
+    week dates row 3, week numbers row 4, SKU label col 2, prices col 3+."""
+    return _parse_grid_with_week_row(
+        ws, channel="Grocer A",
+        week_row_idx=4, date_row_idx=3,
+        sku_label_col=2, first_data_col=3, first_data_row=5,
+    )
+
+
+def _parse_sainsburys(ws) -> list[PromoCell]:
+    """Sainsbury's: period code row 1, dates row 2, week numbers row 3,
+    SKU label col 0, data col 1+."""
+    return _parse_grid_with_week_row(
+        ws, channel="Grocer B",
+        week_row_idx=3, date_row_idx=2,
+        sku_label_col=0, first_data_col=1, first_data_row=4,
+    )
+
+
+def _parse_waitrose(ws) -> list[PromoCell]:
+    """Waitrose: same structure as Sainsbury's."""
+    return _parse_grid_with_week_row(
+        ws, channel="Grocer E",
+        week_row_idx=3, date_row_idx=2,
+        sku_label_col=0, first_data_col=1, first_data_row=4,
+    )
+
+
+def _parse_morrisons(ws) -> list[PromoCell]:
+    """Morrisons is pivoted differently — wide, sparse, 'Start/end' row + 'Period' row.
+    Row 1 has alternating (start_date, NaT, start_date, NaT, ...) — odd cols are starts
+    of period windows, not weekly. Skus start from row 6.
+
+    Because the granularity isn't weekly we treat each period as a single
+    promo-window record: one row per (sku, period_start_date)."""
+    rows = list(ws.values)
+    if len(rows) < 6:
+        return []
+    date_row = rows[1]
+    period_row = rows[2]
+    # Collect (col_idx, start_date, period_code) for cells where date_row has a real datetime
+    windows: list[tuple[int, date, str | None]] = []
+    for j, c in enumerate(date_row):
+        if isinstance(c, (datetime, date)):
+            pcode = period_row[j] if j < len(period_row) else None
+            if isinstance(pcode, str):
+                pcode = pcode.strip()
+            else:
+                pcode = None
+            windows.append((j, _iso_monday(c), pcode))
+    if not windows:
+        return []
+
+    out: list[PromoCell] = []
+    for row in rows[6:]:
+        if not row:
+            continue
+        sku = row[0] if row[0] else None
+        if not isinstance(sku, str) or not sku.strip():
+            continue
+        sku = sku.strip()
+        for j, iso_mon, pcode in windows:
+            if j >= len(row) or row[j] is None:
+                continue
+            val = row[j]
+            kind, price, offer = _classify_cell(val)
+            if kind == "other" and not str(val).strip():
+                continue
+            out.append(PromoCell(
+                channel="Grocer D", sku=sku, iso_week=iso_mon, week_number=None,
+                price_gbp=price, multi_buy_offer=offer, cell_kind=kind,
+                raw_value=str(val).strip(),
+            ))
+    return out
+
+
+def _parse_asda(ws) -> list[PromoCell]:
+    """Asda uses 'R1'..'R14' codes; row 1 has 'dd/mm-dd/mm' date-range strings.
+    The default year is 2026 (inferred from the other sheets which use 2026 dates)."""
+    rows = list(ws.values)
+    if len(rows) < 3:
+        return []
+    date_range_row = rows[1]
+    windows: list[tuple[int, list[date]]] = []
+    for j, c in enumerate(date_range_row):
+        if not isinstance(c, str):
+            continue
+        rng = _parse_dd_mm_range(c, default_year=2026)
+        if rng:
+            windows.append((j, list(_iter_weeks(rng[0], rng[1]))))
+    if not windows:
+        return []
+
+    out: list[PromoCell] = []
+    for row in rows[2:]:
+        if not row:
+            continue
+        sku = row[0]
+        if not isinstance(sku, str) or not sku.strip():
+            continue
+        sku = sku.strip()
+        for j, weeks in windows:
+            if j >= len(row) or row[j] is None:
+                continue
+            val = row[j]
+            kind, price, offer = _classify_cell(val)
+            for iso_mon in weeks:
+                out.append(PromoCell(
+                    channel="Grocer C", sku=sku, iso_week=iso_mon, week_number=None,
+                    price_gbp=price, multi_buy_offer=offer, cell_kind=kind,
+                    raw_value=str(val).strip(),
+                ))
+    return out
+
+
+_PARSERS: dict[str, callable] = {
+    "Tesco":         _parse_tesco,
+    "Sainsbury's":   _parse_sainsburys,
+    "Waitrose":      _parse_waitrose,
+    "Morrisons":     _parse_morrisons,
+    "Asda":          _parse_asda,
+}
 
 
 def parse_promos_all() -> pl.DataFrame:
-    """
-    First-pass promo parser. The five Damm sheets have very different layouts
-    (see DATA.md §4). This implementation focuses on the structure they DO share:
-    a header row with date ranges, and a SKU column. Anything we can't confidently
-    parse is dropped with a warning rather than guessed.
-
-    Result columns: channel, sku, iso_week, event_label, promo_type, discount_pct, notes.
+    """Parse every retailer with its own sheet-specific parser, then promote
+    `cell_kind` → `promo_type` by adding the *price-cut* category, which can
+    only be determined after we know each SKU's baseline price.
     """
     import openpyxl
     wb = openpyxl.load_workbook(PROMO_XLSX, read_only=True, data_only=True)
-    rows: list[PromoRow] = []
 
-    DATE_RANGE = re.compile(r"(\d{1,2})/(\d{1,2})\s*-\s*(\d{1,2})/(\d{1,2})")
-
-    for sheet_name in wb.sheetnames:
-        channel = anonymize_promo_sheet(sheet_name)
-        ws = wb[sheet_name]
-        sheet_rows = list(ws.values)
-        if not sheet_rows:
+    cells: list[PromoCell] = []
+    for raw_sheet_name in wb.sheetnames:
+        key = raw_sheet_name.strip()
+        parser = _PARSERS.get(key)
+        if parser is None:
+            print(f"  ! no parser for sheet {raw_sheet_name!r} — skipped")
             continue
+        ws = wb[raw_sheet_name]
+        these = parser(ws)
+        print(f"  · {raw_sheet_name:<14} {len(these):>5} cells parsed  →  channel={(these[0].channel if these else '—')}")
+        cells.extend(these)
 
-        # Find the row index of the header (the one with date-range strings or datetime cells)
-        header_idx = None
-        for i, row in enumerate(sheet_rows[:6]):
-            cells = [c for c in row if c is not None]
-            if not cells:
-                continue
-            # Prefer a row dominated by date ranges or actual datetimes
-            n_date = sum(
-                1 for c in cells
-                if isinstance(c, str) and DATE_RANGE.search(c)
-                or hasattr(c, "year")   # datetime-like
-            )
-            if n_date >= 2:
-                header_idx = i
-                break
-        if header_idx is None:
-            print(f"  ! {sheet_name!r}: couldn't find a header row — skipped")
-            continue
-
-        header = sheet_rows[header_idx]
-        # Each non-empty header cell becomes a (col_idx, label) pair
-        cols_with_labels = [
-            (j, str(c).strip()) for j, c in enumerate(header) if c is not None and str(c).strip()
-        ]
-
-        # For each subsequent row, the first non-numeric cell is treated as the SKU label
-        for row in sheet_rows[header_idx + 1:]:
-            if not row or all(c is None for c in row):
-                continue
-            sku_cell = next((c for c in row if isinstance(c, str) and c.strip()), None)
-            sku = sku_cell.strip() if sku_cell else None
-
-            for col_idx, label in cols_with_labels:
-                if col_idx >= len(row):
-                    continue
-                cell = row[col_idx]
-                if cell is None or (isinstance(cell, float) and cell != cell):  # NaN
-                    continue
-                if isinstance(cell, str) and not cell.strip():
-                    continue
-
-                # The cell content is usually a price/discount marker; existence = promo active
-                m = DATE_RANGE.search(label)
-                iso_week = None
-                if m:
-                    d, mo, _, _ = m.groups()
-                    try:
-                        iso_week = date(2026, int(mo), int(d))
-                    except ValueError:
-                        iso_week = None
-                discount_pct = None
-                if isinstance(cell, (int, float)):
-                    discount_pct = float(cell) if 0 < cell <= 100 else None
-
-                rows.append(PromoRow(
-                    channel=channel,
-                    sku=sku,
-                    iso_week=iso_week,
-                    event_label=label[:200],
-                    promo_type=_classify_event(label),
-                    discount_pct=discount_pct,
-                    notes=None,
-                ))
-
-    if not rows:
-        print("  ! parsed 0 promo rows from all sheets — sheets may need bespoke parsers")
+    if not cells:
         return pl.DataFrame(schema={
             "channel": pl.String, "sku": pl.String, "iso_week": pl.Date,
-            "event_label": pl.String, "promo_type": pl.String,
-            "discount_pct": pl.Float64, "notes": pl.String,
+            "week_number": pl.Int32, "price_gbp": pl.Float64,
+            "multi_buy_offer": pl.String, "promo_type": pl.String,
+            "on_promo": pl.Boolean, "baseline_price_gbp": pl.Float64,
+            "raw_value": pl.String,
         })
 
     df = pl.DataFrame(
-        [r.__dict__ for r in rows],
+        [c.__dict__ for c in cells],
         schema={
             "channel": pl.String, "sku": pl.String, "iso_week": pl.Date,
-            "event_label": pl.String, "promo_type": pl.String,
-            "discount_pct": pl.Float64, "notes": pl.String,
+            "week_number": pl.Int32, "price_gbp": pl.Float64,
+            "multi_buy_offer": pl.String, "cell_kind": pl.String,
+            "raw_value": pl.String,
         },
     )
-    print(f"  · promos parsed: {len(df):,} rows from {df['channel'].n_unique()} channels")
+
+    # Baseline price per (channel, sku) = median of all 'price' cells
+    baselines = (
+        df.filter(pl.col("cell_kind") == "price")
+        .group_by(["channel", "sku"])
+        .agg(baseline_price_gbp=pl.col("price_gbp").median())
+    )
+    df = df.join(baselines, on=["channel", "sku"], how="left")
+
+    # Promote cell_kind into a clean promo_type
+    df = df.with_columns(
+        promo_type=pl.when(pl.col("cell_kind") == "listing").then(pl.lit("listing"))
+        .when(pl.col("cell_kind") == "clearance").then(pl.lit("clearance"))
+        .when(pl.col("cell_kind") == "rollback").then(pl.lit("rollback"))
+        .when(pl.col("cell_kind") == "multi-buy").then(pl.lit("multi-buy"))
+        .when((pl.col("cell_kind") == "price")
+              & (pl.col("baseline_price_gbp").is_not_null())
+              & (pl.col("price_gbp") < pl.col("baseline_price_gbp") * 0.9))
+            .then(pl.lit("price-cut"))
+        .when(pl.col("cell_kind") == "price").then(pl.lit("regular"))
+        .when(pl.col("cell_kind") == "other").then(pl.lit("no-listing"))
+        .otherwise(pl.lit("no-listing"))
+    ).with_columns(
+        on_promo=pl.col("promo_type").is_in(["multi-buy", "price-cut", "rollback", "clearance"]),
+    ).drop("cell_kind")
+
+    # Sanity check — every promo_type must be in our taxonomy
+    seen_types = set(df["promo_type"].unique().to_list())
+    unexpected = seen_types - PROMO_TYPES
+    assert not unexpected, f"BUG: unexpected promo_type values produced: {unexpected}"
     return df
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# External enrichment (Phase 1: just UK holidays; weather/trends are H4-H6)
+# External enrichment (Phase 1 = UK holidays only; weather/trends in Phase 2)
 # ────────────────────────────────────────────────────────────────────────────
 
 def attach_uk_holidays(monthly: pl.DataFrame) -> pl.DataFrame:
-    """Per-month count of UK bank holidays."""
     import holidays as hd
     years = sorted(monthly["year"].unique().to_list())
     uk = hd.country_holidays("GB", years=years)
@@ -417,7 +658,6 @@ def attach_uk_holidays(monthly: pl.DataFrame) -> pl.DataFrame:
     for d in uk.keys():
         first = date(d.year, d.month, 1)
         counts[first] = counts.get(first, 0) + 1
-
     return monthly.with_columns(
         pl.col("date").map_elements(lambda d: counts.get(d, 0), return_dtype=pl.Int32).alias("uk_holidays_count")
     )
@@ -428,45 +668,60 @@ def attach_uk_holidays(monthly: pl.DataFrame) -> pl.DataFrame:
 # ────────────────────────────────────────────────────────────────────────────
 
 def validate_monthly(monthly: pl.DataFrame) -> None:
-    """Cheap sanity checks. Raises if anything obviously broken."""
     assert len(monthly) > 0, "monthly is empty"
-    assert monthly["Hl"].min() > 0, "non-positive Hl in monthly (should have been netted out)"
+    assert monthly["Hl"].min() > 0, "non-positive Hl in monthly"
     sub_set = set(monthly["sub_channel"].unique().to_list())
     bad = sub_set - ALLOWED_SUB_CHANNELS
     assert not bad, f"unexpected sub_channels: {bad}"
-    n_null_period = monthly["date"].null_count()
-    assert n_null_period == 0, f"{n_null_period} null dates in monthly"
-    print(f"  · validation passed ({len(monthly):,} rows)")
+    assert monthly["date"].null_count() == 0, "null dates in monthly"
+    print(f"  · monthly validation passed ({len(monthly):,} rows)")
+
+
+def validate_promos(promos: pl.DataFrame) -> None:
+    if len(promos) == 0:
+        print("  ! promos is empty — parser found nothing")
+        return
+    bad = set(promos["promo_type"].unique().to_list()) - PROMO_TYPES
+    assert not bad, f"unexpected promo_type: {bad}"
+    assert promos["channel"].null_count() == 0, "null channel in promos"
+    by_type = dict(promos.group_by("promo_type").agg(pl.len().alias("n")).iter_rows())
+    by_channel = dict(promos.group_by("channel").agg(pl.len().alias("n")).iter_rows())
+    print(f"  · promo types: {by_type}")
+    print(f"  · per channel: {by_channel}")
+
+
+def validate_targets(targets: pl.DataFrame, monthly: pl.DataFrame) -> None:
+    assert len(targets) == len(monthly), \
+        f"targets/monthly row mismatch: {len(targets)} vs {len(monthly)}"
+    assert targets["target_hl"].null_count() == 0, "null target_hl after coalesce"
+    assert set(targets["target_source"].unique().to_list()) <= {"prior_year", "trailing_median"}
 
 
 # ────────────────────────────────────────────────────────────────────────────
 # Output writers
 # ────────────────────────────────────────────────────────────────────────────
 
-def write_snapshots(monthly: pl.DataFrame, budgets: pl.DataFrame, promos: pl.DataFrame) -> None:
+def write_snapshots(monthly: pl.DataFrame, targets: pl.DataFrame, promos: pl.DataFrame) -> None:
     SNAPSHOTS.mkdir(parents=True, exist_ok=True)
     monthly.write_parquet(SNAPSHOTS / "wide_monthly.parquet")
-    budgets.write_parquet(SNAPSHOTS / "budgets.parquet")
+    targets.write_parquet(SNAPSHOTS / "targets.parquet")
     promos.write_parquet(SNAPSHOTS / "promos.parquet")
     print(f"  · wrote wide_monthly.parquet ({len(monthly):,} rows)")
-    print(f"  · wrote budgets.parquet      ({len(budgets):,} rows)")
+    print(f"  · wrote targets.parquet      ({len(targets):,} rows)")
     print(f"  · wrote promos.parquet       ({len(promos):,} rows)")
 
 
 def write_meta(monthly: pl.DataFrame) -> None:
-    """meta.json drives the FE filter dropdowns."""
     brands = sorted(monthly["brand"].drop_nulls().unique().to_list())
     sub_channels = sorted(monthly["sub_channel"].drop_nulls().unique().to_list())
     sales_channels = sorted(monthly["sales_channel"].drop_nulls().unique().to_list())
     skus = (
-        monthly
-        .group_by("material_id")
+        monthly.group_by("material_id")
         .agg(pl.col("brand").first(), pl.col("Hl").sum().alias("total_hl"))
         .sort("total_hl", descending=True)
-        .with_columns(label=pl.col("material_id"))
         .select(
             pl.col("material_id").alias("id"),
-            "label",
+            pl.col("material_id").alias("label"),
             "brand",
         )
         .to_dicts()
@@ -474,36 +729,24 @@ def write_meta(monthly: pl.DataFrame) -> None:
     periods = sorted(monthly["date"].unique().to_list())
     period_strings = [d.strftime("%Y-%m") for d in periods]
 
-    # Hero: top-volume SKU in (top_brand × GROCERY) — drives demo deep-link and
-    # snapshot generation. Picked dynamically so it stays accurate as data evolves.
-    top_brand = brands_by_volume = monthly.group_by("brand").agg(pl.col("Hl").sum()).sort("Hl", descending=True)
-    top_brand_name = top_brand[0, "brand"]
+    top_brand = monthly.group_by("brand").agg(pl.col("Hl").sum()).sort("Hl", descending=True)[0, "brand"]
     hero_row = (
-        monthly
-        .filter((pl.col("brand") == top_brand_name) & (pl.col("sub_channel") == "GROCERY"))
+        monthly.filter((pl.col("brand") == top_brand) & (pl.col("sub_channel") == "GROCERY"))
         .group_by("material_id")
         .agg(pl.col("Hl").sum().alias("total_hl"))
         .sort("total_hl", descending=True)
         .head(1)
     )
-    if len(hero_row) == 0:
-        hero = {"sku": None, "brand": top_brand_name, "sub_channel": "GROCERY", "period": "2026-11"}
-    else:
-        hero = {
-            "sku": hero_row[0, "material_id"],
-            "brand": top_brand_name,
-            "sub_channel": "GROCERY",
-            "period": "2026-11",
-        }
+    hero = {
+        "sku": hero_row[0, "material_id"] if len(hero_row) else None,
+        "brand": top_brand, "sub_channel": "GROCERY", "period": period_strings[-1],
+    }
 
     meta = {
-        "brands": brands,
-        "skus": skus,
-        "sub_channels": sub_channels,
-        "sales_channels": sales_channels,
+        "brands": brands, "skus": skus,
+        "sub_channels": sub_channels, "sales_channels": sales_channels,
         "period_range": [period_strings[0], period_strings[-1]],
-        "n_months": len(periods),
-        "n_skus": len(skus),
+        "n_months": len(periods), "n_skus": len(skus),
         "hero": hero,
     }
     (SNAPSHOTS / "meta.json").write_text(json.dumps(meta, indent=2, default=str))
@@ -528,8 +771,8 @@ def main() -> int:
     print("\n[3/8] Loading materials")
     materials = load_materials()
 
-    print("\n[4/8] Splitting actuals vs budget rows")
-    actuals, budget = split_actuals_budget(sales_raw)
+    print("\n[4/8] Filtering to actuals (null-Hl rows are accounting noise, not budget)")
+    actuals = filter_actuals(sales_raw)
 
     print("\n[5/8] Netting returns")
     actuals_netted = net_returns(actuals)
@@ -537,15 +780,17 @@ def main() -> int:
     print("\n[6/8] Joining sales × customers × materials (UK only)")
     joined = join_uk(actuals_netted, customers_uk, materials)
 
-    print("\n[7/8] Aggregating to monthly grain + external enrichment")
+    print("\n[7/8] Aggregating to monthly grain + holidays + targets")
     monthly = aggregate_monthly(joined)
     monthly = attach_uk_holidays(monthly)
     validate_monthly(monthly)
+    targets = derive_targets(monthly)
+    validate_targets(targets, monthly)
 
-    print("\n[8/8] Parsing promos and writing snapshots")
-    budgets = build_budgets(budget, customers_uk, materials)
+    print("\n[8/8] Parsing promos (per-retailer parsers + content-based classifier)")
     promos = parse_promos_all()
-    write_snapshots(monthly, budgets, promos)
+    validate_promos(promos)
+    write_snapshots(monthly, targets, promos)
     write_meta(monthly)
 
     print("\nDone.")
