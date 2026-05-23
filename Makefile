@@ -12,11 +12,9 @@
 #   make clean       remove caches, build artifacts
 #   make doctor      check that hf, mongo, hf token, and python are all ready
 
-SHELL          := /bin/bash
-PYTHONHASHSEED := 42                       # deterministic anonymization hashes
-export PYTHONHASHSEED
+SHELL := /bin/bash
+PY    := PYTHONHASHSEED=42 uv run python   # deterministic anonymization hashes for our scripts only
 
-PY  := uv run python
 BE  := backend
 FE  := frontend
 PNPM := pnpm
