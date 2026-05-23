@@ -61,7 +61,14 @@ export function PageContentHeader({
   const hasHeaderContent = !!(title || controls || headerContent)
 
   return (
-    <div className={cn(hasHeaderContent && "border-b border-neutral-200")}>
+    <div
+      className={cn(
+        // Sticky inside the scrollable white card so the title stays pinned
+        // while the body content scrolls under it. Matches Dub consumer.
+        "sticky top-0 z-20 bg-white",
+        hasHeaderContent && "border-b border-neutral-200",
+      )}
+    >
       <PageWidthWrapper>
         <div
           className={cn(

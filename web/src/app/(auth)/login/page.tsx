@@ -1,19 +1,11 @@
 "use client"
 
 /**
- * Login — direct port of Dub's `/login` page composition.
+ * Login — Dub consumer auth pattern.
  *
- *   <Wordmark />  (centered, above the form)
- *   <h3>Sign in to your Ramp account</h3>
- *   <LoginForm />
- *     - Continue with Google
- *     - Continue with GitHub
- *     - AuthMethodsSeparator (or)
- *     - Email input + Continue with email
- *
- * No card border, no extra chrome. Form sits flat on the page; AuthLayout
- * handles vertical centering. Any button sets the mp_session cookie and
- * bounces to ?next=… (defaults to /).
+ * Compact form. No "what is this app" subtitle (the wordmark brands it).
+ * Buttons sized to match Dub's `Button` (h-10, font-medium).
+ * Any button -> sets mp_session cookie -> bounces to ?next=… (defaults to /).
  */
 
 import { useRouter, useSearchParams } from "next/navigation"
@@ -32,14 +24,10 @@ function signIn(): void {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<LoginFormSkeleton />}>
+    <Suspense fallback={<div className="w-full max-w-sm h-[360px]" />}>
       <LoginForm />
     </Suspense>
   )
-}
-
-function LoginFormSkeleton() {
-  return <div className="w-full max-w-sm h-[420px]" />
 }
 
 function LoginForm() {
@@ -51,7 +39,7 @@ function LoginForm() {
 
   async function handle(provider: "google" | "github" | "email") {
     setPending(provider)
-    await new Promise((r) => setTimeout(r, 450))
+    await new Promise((r) => setTimeout(r, 350))
     signIn()
     router.push(next)
     router.refresh()
@@ -59,48 +47,38 @@ function LoginForm() {
 
   return (
     <div className="w-full max-w-sm">
-      <div className="flex justify-center mb-7">
-        <Wordmark className="text-neutral-900" />
+      <div className="flex justify-center mb-6">
+        <Wordmark />
       </div>
 
       <h3 className="text-center text-xl font-semibold text-neutral-900">
         Sign in to your Ramp account
       </h3>
-      <p className="mt-1.5 text-center text-sm text-neutral-500">
-        UK commercial intelligence, in one inbox.
-      </p>
 
-      <div className="mt-8 flex flex-col gap-2">
+      <div className="mt-7 flex flex-col gap-2">
         <Button
           variant="outline"
-          className="h-10 gap-2.5"
+          className="h-10 gap-2.5 font-medium border-neutral-200"
           onClick={() => handle("google")}
           disabled={pending !== null}
         >
-          {pending === "google" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <GoogleIcon />
-          )}
+          {pending === "google" ? <Loader2 className="h-4 w-4 animate-spin" /> : <GoogleIcon />}
           Continue with Google
         </Button>
         <Button
-          className="h-10 gap-2.5"
+          variant="outline"
+          className="h-10 gap-2.5 font-medium border-neutral-200"
           onClick={() => handle("github")}
           disabled={pending !== null}
         >
-          {pending === "github" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <GitHubIcon />
-          )}
+          {pending === "github" ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitHubIcon />}
           Continue with GitHub
         </Button>
       </div>
 
       <div className="my-5 flex items-center gap-3">
         <div className="h-px flex-1 bg-neutral-200" />
-        <div className="text-[11px] uppercase tracking-wider text-neutral-500">or</div>
+        <div className="text-[11px] uppercase tracking-wider text-neutral-400">or</div>
         <div className="h-px flex-1 bg-neutral-200" />
       </div>
 
@@ -114,24 +92,22 @@ function LoginForm() {
       >
         <Input
           type="email"
-          placeholder="you@damm.com"
+          placeholder="name@damm.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           autoComplete="email"
           className="h-10"
         />
-        <Button
-          type="submit"
-          variant="outline"
-          className="h-10"
-          disabled={pending !== null}
-        >
-          {pending === "email" ? (
-            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-          ) : null}
+        <Button type="submit" className="h-10 font-medium" disabled={pending !== null}>
+          {pending === "email" && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
           Continue with email
         </Button>
       </form>
+
+      <p className="mt-6 text-center text-sm text-neutral-500">
+        Don&apos;t have an account?{" "}
+        <span className="font-semibold text-neutral-700">It&apos;s a demo — any button works.</span>
+      </p>
     </div>
   )
 }
@@ -149,7 +125,7 @@ function GoogleIcon() {
 
 function GitHubIcon() {
   return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden>
+    <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current text-neutral-900" aria-hidden>
       <path d="M12 .5C5.37.5 0 5.87 0 12.5c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58v-2.02c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.34-5.47-5.95 0-1.32.47-2.39 1.24-3.24-.12-.31-.54-1.54.12-3.2 0 0 1.01-.32 3.3 1.24a11.5 11.5 0 0 1 6 0c2.29-1.56 3.3-1.24 3.3-1.24.66 1.66.24 2.89.12 3.2.77.85 1.24 1.92 1.24 3.24 0 4.62-2.81 5.64-5.49 5.94.43.37.81 1.1.81 2.21v3.28c0 .32.22.7.83.58A12.01 12.01 0 0 0 24 12.5C24 5.87 18.63.5 12 .5z" />
     </svg>
   )

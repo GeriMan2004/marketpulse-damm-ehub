@@ -1,14 +1,13 @@
 /**
  * Triage Inbox — home base for a UK Commercial Manager.
  *
- * Wrapped in <PageContent title="Inbox">; that gives us Dub-consumer's
- * sticky title bar + bordered content area. Inside, sections stack
- * vertically with PageWidthWrapper'd content.
+ * Quiet by design: one subtitle line + a worklist. No metric tiles — this is
+ * a list of things to do, not a dashboard about how things are going.
  */
 
 import Link from "next/link"
 import { Suspense } from "react"
-import { ArrowRight, AlertTriangle, TrendingDown, TrendingUp } from "lucide-react"
+import { ArrowRight } from "lucide-react"
 import { PageContent } from "@/components/shell/PageContent"
 import { PageWidthWrapper } from "@/components/shell/PageWidthWrapper"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -24,13 +23,7 @@ type Meta = components["schemas"]["MetaResponse"]
 export default function Page() {
   return (
     <PageContent title="Inbox">
-      <PageWidthWrapper className="pb-10">
-        <div className="mb-6 max-w-2xl">
-          <p className="text-sm text-neutral-500">
-            UK SKUs ranked by gap to target. Open a row to diagnose, choose an action, and simulate it.
-          </p>
-        </div>
-
+      <PageWidthWrapper className="pb-10 pt-2">
         <Suspense fallback={<InboxSkeleton />}>
           <Inbox />
         </Suspense>
@@ -60,26 +53,19 @@ async function Inbox() {
 
   return (
     <>
-      <div className="grid grid-cols-3 gap-3">
-        <SummaryTile
-          label="Behind target"
-          value={`${negCount}`}
-          unit="rows"
-          icon={<AlertTriangle className="h-3.5 w-3.5 text-[color:var(--negative)]" />}
-        />
-        <SummaryTile
-          label="Total gap"
-          value={formatHl(totalGapHl)}
-          tone="negative"
-          icon={<TrendingDown className="h-3.5 w-3.5 text-[color:var(--negative)]" />}
-        />
-        <SummaryTile
-          label="Ahead of target"
-          value={`${positives.length}`}
-          unit="rows"
-          icon={<TrendingUp className="h-3.5 w-3.5 text-[color:var(--positive)]" />}
-        />
-      </div>
+      {/* Single quiet context line — replaces the noisy 3 metric tiles */}
+      <p className="text-sm text-neutral-500">
+        <span className="text-neutral-900 font-medium">{negCount}</span> SKUs behind target,
+        total gap{" "}
+        <span className="text-neutral-900 font-medium tabular-nums">
+          {formatHl(totalGapHl)}
+        </span>
+        . {positives.length > 0 && (
+          <>
+            <span className="text-neutral-900 font-medium">{positives.length}</span> ahead.
+          </>
+        )}
+      </p>
 
       <Section title="Action queue" subtitle={`${negatives.length} items · sorted by impact`}>
         <ul className="divide-y divide-neutral-200">
@@ -110,9 +96,9 @@ function Section({
   children: React.ReactNode
 }) {
   return (
-    <section className="mt-8">
+    <section className="mt-6">
       <div className="flex items-baseline justify-between mb-3">
-        <h3 className="text-[15px] font-semibold text-neutral-900">{title}</h3>
+        <h3 className="text-[13px] font-semibold text-neutral-900">{title}</h3>
         <div className="text-[11.5px] text-neutral-500">{subtitle}</div>
       </div>
       <div className="rounded-xl border border-neutral-200 bg-white overflow-hidden">{children}</div>
@@ -168,49 +154,18 @@ function InboxRow({ gap, meta, positive: _positive }: { gap: GapItem; meta: Meta
   )
 }
 
-function SummaryTile({
-  label, value, unit, icon, tone,
-}: {
-  label: string
-  value: string
-  unit?: string
-  icon: React.ReactNode
-  tone?: "negative" | "positive" | "neutral"
-}) {
-  const color =
-    tone === "negative" ? "var(--negative)" : tone === "positive" ? "var(--positive)" : "#171717"
-  return (
-    <div className="rounded-xl border border-neutral-200 bg-white px-4 py-3">
-      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-neutral-500 font-medium">
-        {icon}
-        {label}
-      </div>
-      <div className="mt-1 flex items-baseline gap-1.5">
-        <div className="text-xl font-semibold tabular-nums tracking-tight" style={{ color }}>
-          {value}
-        </div>
-        {unit && <div className="text-[11px] text-neutral-500">{unit}</div>}
-      </div>
-    </div>
-  )
-}
-
 function InboxSkeleton() {
   return (
-    <>
-      <div className="grid grid-cols-3 gap-3">
-        {[0, 1, 2].map((i) => <Skeleton key={i} className="h-[68px]" />)}
+    <div className="mt-2">
+      <Skeleton className="h-4 w-80 mb-6" />
+      <Skeleton className="h-5 w-32 mb-3" />
+      <div className="rounded-xl border border-neutral-200 bg-white overflow-hidden">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div key={i} className="px-4 py-3 border-b border-neutral-200 last:border-0">
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ))}
       </div>
-      <div className="mt-8">
-        <Skeleton className="h-5 w-32 mb-3" />
-        <div className="rounded-xl border border-neutral-200 bg-white overflow-hidden">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="px-4 py-3 border-b border-neutral-200 last:border-0">
-              <Skeleton className="h-10 w-full" />
-            </div>
-          ))}
-        </div>
-      </div>
-    </>
+    </div>
   )
 }
