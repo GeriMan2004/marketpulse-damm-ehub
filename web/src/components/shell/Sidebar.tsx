@@ -208,7 +208,7 @@ export function Sidebar() {
                 </span>
               )}
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto -mx-1 px-1">
+            <div className="flex-1 min-h-0 overflow-y-auto -mx-1 px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {newsLoading && articles.length === 0 ? (
                 <div className="space-y-1.5 px-1 py-1">
                   <Skeleton className="h-16 w-full rounded-lg" />
