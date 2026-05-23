@@ -30,13 +30,24 @@ import hashlib
 import json
 import logging
 import os
+import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlparse
 
+from dotenv import load_dotenv
+
 from app.schemas.news import NewsArticle
+
+# Load backend/.env on import. The CLI entrypoint `python -m app.jobs.refresh_news`
+# doesn't go through uvicorn, so the dotenv load that lives in services/llm.py
+# isn't triggered — without this line, TAVILY_API_KEY reads as empty even when
+# the value is sitting in backend/.env. Idempotent: re-loading is a no-op.
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(_BACKEND_ROOT / ".env")
 
 log = logging.getLogger(__name__)
 
@@ -48,14 +59,17 @@ log = logging.getLogger(__name__)
 CACHE_DIR = Path(__file__).resolve().parents[1] / "data" / "cache" / "news"
 CACHE_FILE = CACHE_DIR / "articles.json"
 
-# Three curated queries. See module docstring for rationale.
+# Three curated queries. Each one HAS to mention beer / lager / grocer
+# explicitly — earlier broad OR'd queries returned unrelated UK news
+# (politics, school geography...) because Tavily would treat "beer" as
+# one of many keywords and match on the rest.
 QUERIES: list[str] = [
-    # Damm brands × UK grocers — narrow, high signal
-    '("Estrella Damm" OR "Cruzcampo") (Tesco OR Sainsbury OR Asda OR Morrisons OR Waitrose) UK',
-    # UK lager category — competitor + price moves
-    'UK lager beer (price OR promotion OR launch OR delisting) (Carlsberg OR Heineken OR "Madri" OR "San Miguel")',
-    # Demand drivers — heatwaves, football, pub trade
-    'UK ("heatwave" OR "England football" OR "pub trade" OR "on-trade" OR "off-trade") beer 2026',
+    # Damm brands in UK grocery
+    '"Estrella Damm" OR "Cruzcampo" UK beer Tesco Sainsbury Asda',
+    # Premium lager category + competitor moves
+    'UK premium lager beer price promotion launch Heineken Carlsberg Madri "San Miguel"',
+    # Pub trade + grocer beer category, with the word "beer" required
+    'UK beer category on-trade off-trade pub trade grocers 2026',
 ]
 
 # Trade press first, mainstream UK news as fallback. Tavily honours this
@@ -71,31 +85,49 @@ INCLUDE_DOMAINS: list[str] = [
     "bighospitality.co.uk",
 ]
 
-# Keyword tag lookups. Plain substring matching against (title + summary)
-# lowercased. Untagged articles ARE still kept — they provide general
-# market context.
+# Keyword tag lookups. Each value is a list of WORD-BOUNDARY regex
+# patterns — plain substring matching had false positives like
+# "trade" matching "trade role" (Mountbatten article) and "pub"
+# matching "public". The patterns are compiled lazily and re-used.
+#
+# Untagged articles are still kept ONLY if the title/summary mentions
+# beer or lager — otherwise Tavily noise (UK politics, weather, etc.)
+# leaks into the rail.
 BRAND_TAGS: dict[str, list[str]] = {
-    "estrella":   ["estrella damm", "estrella"],
-    "cruzcampo":  ["cruzcampo"],
-    "madri":      ["madri"],
-    "san_miguel": ["san miguel"],
-    "competitor": ["carlsberg", "heineken", "stella artois", "peroni", "birra moretti"],
+    "estrella":   [r"\bestrella\b"],
+    "cruzcampo":  [r"\bcruzcampo\b"],
+    "madri":      [r"\bmadri\b"],
+    "san_miguel": [r"\bsan miguel\b"],
+    "competitor": [r"\bcarlsberg\b", r"\bheineken\b", r"\bstella artois\b", r"\bperoni\b", r"\bbirra moretti\b"],
 }
 CHANNEL_TAGS: dict[str, list[str]] = {
-    "tesco":      ["tesco"],
-    "sainsburys": ["sainsbury"],
-    "asda":       ["asda"],
-    "morrisons":  ["morrisons"],
-    "waitrose":   ["waitrose"],
-    "on_trade":   ["pub", "on-trade", "hospitality"],
+    "tesco":      [r"\btesco\b"],
+    "sainsburys": [r"\bsainsbury(?:'s|s)?\b"],
+    "asda":       [r"\basda\b"],
+    "morrisons":  [r"\bmorrisons\b"],
+    "waitrose":   [r"\bwaitrose\b"],
+    # Pub / on-trade specifically — NOT bare "pub" (matches "public")
+    # and NOT bare "trade" (matches "trade role", "trade war")
+    "on_trade":   [r"\bon[- ]?trade\b", r"\bpub trade\b", r"\bpubs?\b(?!lic)", r"\bhospitality\b"],
+    "off_trade":  [r"\boff[- ]?trade\b"],
 }
 EVENT_TAGS: dict[str, list[str]] = {
-    "price":      ["price cut", "price rise", "discount", "promotion"],
-    "launch":     ["launches", "launch", "rolls out", "new range"],
-    "delisting":  ["delist", "axes", "drops"],
-    "weather":    ["heatwave", "temperature", "weather"],
-    "regulation": ["minimum unit pricing", "mup", "duty"],
+    "price":      [r"\bprice cut\b", r"\bprice (?:rise|increase|hike)\b", r"\bdiscount(?:ing)?\b", r"\bpromotion\b"],
+    "launch":     [r"\blaunches?\b", r"\brolls?[- ]out\b", r"\bnew range\b", r"\bunveil(?:s|ed)?\b"],
+    "delisting":  [r"\bdelist(?:ing|s|ed)?\b", r"\baxe(?:s|d)?\b", r"\bdrops?\b"],
+    "weather":    [r"\bheat ?wave\b", r"\btemperature\b", r"\bweather\b"],
+    "regulation": [r"\bminimum unit pricing\b", r"\bmup\b", r"\b(?:beer )?duty\b"],
 }
+
+# Words that confirm an article is on-topic for the beer market.
+# An article with no brand_tag / event_tag survives only if one of these
+# fires — keeps "general beer market context" without letting unrelated
+# UK news through.
+BEER_KEEP_PATTERN = re.compile(
+    r"\b(beer|lager|brewer(?:y|ies)?|ale|stout|cask|keg|pint|pub|"
+    r"on[- ]trade|off[- ]trade|grocer|supermarket|hospitality|drink(?:s)?)\b",
+    re.IGNORECASE,
+)
 
 # How far back Tavily should look on each refresh, and how far back the
 # cache should keep history.
@@ -125,12 +157,29 @@ def _source_domain(url: str) -> str:
         return ""
 
 
+def _ascii_fold(text: str) -> str:
+    """Strip accents so 'Madrí' matches \\bmadri\\b. NFKD + drop combining marks."""
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
+    )
+
+
 def _tag(text: str, lookup: dict[str, list[str]]) -> list[str]:
-    """Return all tag keys whose keywords appear in `text` (case-insensitive)."""
+    """Return all tag keys whose word-boundary regex matches `text`.
+
+    Case-insensitive AND accent-insensitive. The accent fold matters
+    because `\\bmadri\\b` would NOT match "Madrí" otherwise — the
+    accented `í` is a word character, so there's no boundary between
+    "madr" and "í". Word boundaries themselves prevent "trade" matching
+    "trade role" and "pub" matching "public".
+    """
     if not text:
         return []
-    haystack = text.lower()
-    return [tag for tag, needles in lookup.items() if any(n in haystack for n in needles)]
+    haystack = _ascii_fold(text)
+    return [
+        tag for tag, patterns in lookup.items()
+        if any(re.search(p, haystack, re.IGNORECASE) for p in patterns)
+    ]
 
 
 def _parse_dt(raw: Any) -> datetime | None:
@@ -242,7 +291,12 @@ def _normalise_result(raw: dict, query_score_floor: float = 0.0) -> NewsArticle 
 
 
 def _query_tavily(client, query: str) -> list[dict]:
-    """Single Tavily search. Returns the raw 'results' list, never raises."""
+    """Single Tavily search. Returns the raw 'results' list, never raises.
+
+    Note: we removed `topic="news"` from the call — with it set, Tavily's
+    results all came back with score=0 and were noticeably less on-topic.
+    Without it, scoring works and the query text is treated more strictly.
+    """
     try:
         resp = client.search(
             query=query,
@@ -250,7 +304,6 @@ def _query_tavily(client, query: str) -> list[dict]:
             max_results=10,
             days=TAVILY_RECENT_DAYS,
             include_domains=INCLUDE_DOMAINS,
-            topic="news",
         )
     except Exception as e:
         log.warning("Tavily query failed (%s): %s", query[:60], e)
@@ -270,10 +323,18 @@ def refresh() -> RefreshOutcome:
     if not api_key:
         # Keep whatever cache we have; the FE will show empty if there's
         # nothing yet.
+        env_path = _BACKEND_ROOT / ".env"
+        env_hint = (
+            f"Tried loading from {env_path} (exists: {env_path.is_file()})."
+        )
         return RefreshOutcome(
             fetched=0, new_articles=0, cache_size=len(cached),
             updated_at=_now(),
-            error="TAVILY_API_KEY is not set. Add it to backend/.env and re-run `make news`.",
+            error=(
+                "TAVILY_API_KEY is not set. Add it to backend/.env "
+                "(NOT .env.example or repo-root .env) and re-run `make news`. "
+                + env_hint
+            ),
         )
 
     try:
@@ -290,17 +351,31 @@ def refresh() -> RefreshOutcome:
 
     fetched_total = 0
     new_count = 0
+    dropped_off_topic = 0
     for q in QUERIES:
         for row in _query_tavily(client, q):
             fetched_total += 1
             art = _normalise_result(row)
             if art is None:
                 continue
+
+            # Topic gate: keep articles that either have a brand/event tag
+            # OR mention beer-market words. Drops generic UK news that
+            # Tavily occasionally backfills into the result set.
+            has_signal_tag = bool(art.brand_tags or art.event_tags)
+            on_topic = BEER_KEEP_PATTERN.search(f"{art.title} {art.summary}") is not None
+            if not has_signal_tag and not on_topic:
+                dropped_off_topic += 1
+                continue
+
             if art.id not in cached:
                 new_count += 1
             # Always upsert — refreshes tags + relevance_score if Tavily
             # surfaced an updated snippet.
             cached[art.id] = art
+
+    if dropped_off_topic:
+        log.info("Dropped %d off-topic article(s) from this refresh.", dropped_off_topic)
 
     # Purge anything older than the retention window. Use published_at when
     # available, fetched_at otherwise — we'd rather over-keep than over-purge.
