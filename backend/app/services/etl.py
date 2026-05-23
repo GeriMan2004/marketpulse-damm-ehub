@@ -663,6 +663,25 @@ def attach_uk_holidays(monthly: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def attach_external(monthly: pl.DataFrame) -> pl.DataFrame:
+    """Join weather, Google Trends, and ONS retail series by month-start date.
+
+    Sources are cached under app/data/cache/. Robust to individual source
+    failures — see external.py.
+    """
+    from app.services.external import fetch_all_external
+    date_min = monthly["date"].min()
+    date_max = monthly["date"].max()
+    ext = fetch_all_external(date_min, date_max)
+    out = monthly.join(ext, on="date", how="left")
+    # Forward-fill then zero-fill for any external column that's null on a given month
+    fill_cols = [c for c in ext.columns if c != "date"]
+    out = out.with_columns(*[pl.col(c).fill_null(0.0) for c in fill_cols])
+    n_filled = sum((monthly[c].null_count() if c in monthly.columns else 0) for c in fill_cols)
+    print(f"  · attached {len(fill_cols)} external columns: {fill_cols}")
+    return out
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Validation
 # ────────────────────────────────────────────────────────────────────────────
@@ -780,9 +799,10 @@ def main() -> int:
     print("\n[6/8] Joining sales × customers × materials (UK only)")
     joined = join_uk(actuals_netted, customers_uk, materials)
 
-    print("\n[7/8] Aggregating to monthly grain + holidays + targets")
+    print("\n[7/8] Aggregating to monthly grain + holidays + external + targets")
     monthly = aggregate_monthly(joined)
     monthly = attach_uk_holidays(monthly)
+    monthly = attach_external(monthly)
     validate_monthly(monthly)
     targets = derive_targets(monthly)
     validate_targets(targets, monthly)

@@ -3,8 +3,13 @@
 # ===========================================================
 backend/app/data/raw/
 backend/app/data/snapshots/
+backend/app/data/cache/
+backend/models/
 !backend/app/data/raw/.gitkeep
 !backend/app/data/snapshots/.gitkeep
+!backend/app/data/cache/.gitkeep
+!backend/models/.gitkeep
+*.joblib
 *.xlsx
 *.xls
 *.csv

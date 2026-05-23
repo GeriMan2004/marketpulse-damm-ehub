@@ -5,13 +5,14 @@ description = "MarketPulse UK — Damm × Engineering Hub hackathon backend"
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "category-encoders>=2.9.0",
+    "chronos-forecasting>=2.2.2",
     "duckdb>=1.5.3",
     "fastapi>=0.136.1",
     "fastexcel>=0.20.2",
     "hierarchicalforecast>=1.5.1",
     "holidays>=0.97",
     "httpx>=0.28.1",
-    "huggingface-hub>=1.16.1",
+    "huggingface-hub>=0.34,<1.0",
     "instructor>=1.15.1",
     "lightgbm>=4.6.0",
     "mlforecast>=1.0.31",
