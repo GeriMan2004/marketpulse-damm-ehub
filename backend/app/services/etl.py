@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -135,13 +136,29 @@ def load_sales_raw() -> pl.DataFrame:
 
 
 def load_customers_uk() -> pl.DataFrame:
+    """Load the CUSTOMERS sheet, which is the UK customer master.
+
+    `Pais` here is the customer's *headquarters* country, not the sales
+    market — every cliente_id in this sheet is a UK-pipeline customer
+    regardless of their HQ. A Swedish entity buying through "FREE TRADE
+    CMBC" is still a UK channel sale (the bottles ship out of UK), and
+    a Dutch BELIV purchase via "MDD COPACKING" is a UK co-pack export.
+
+    Earlier versions filtered by `Pais == "Reino Unido"` and silently
+    dropped ~21 kHl of legitimate FREE TRADE CMBC and MDD COPACKING
+    volume across 9 export accounts. We now keep every row whose
+    SubChannel is one of the allowed UK channels (the sub_channel filter
+    in `join_uk` is the single source of truth for "is this UK?").
+    """
     df = pl.read_excel(SALES_XLSX, sheet_name="CUSTOMERS")
-    uk = df.filter(pl.col("Pais") == "Reino Unido")
-    sub_values = set(uk["SubChannel"].drop_nulls().unique().to_list())
+    sub_values = set(df["SubChannel"].drop_nulls().unique().to_list())
     unexpected = sub_values - ALLOWED_SUB_CHANNELS
     if unexpected:
-        print(f"  ! unexpected SubChannel values (will be dropped from final): {unexpected}")
-    return uk.with_columns(
+        print(f"  · CUSTOMERS rows with non-UK SubChannel (will be dropped later): {unexpected}")
+    n_non_uk_kept = (df["Pais"] != "Reino Unido").sum()
+    print(f"  · loaded {len(df):,} customer rows  "
+          f"(of which {n_non_uk_kept} are non-UK headquarters but route through UK channels)")
+    return df.with_columns(
         pl.col("Agrupacion BU3").map_elements(anonymize, return_dtype=pl.String).alias("customer_anon"),
     ).select(
         pl.col("Cod. Cliente").alias("cliente_id"),
@@ -895,48 +912,86 @@ def write_meta(monthly: pl.DataFrame) -> None:
 # ────────────────────────────────────────────────────────────────────────────
 
 def main() -> int:
-    print("=" * 70)
-    print("MarketPulse UK — ETL")
-    print("=" * 70)
+    """Run the ETL.
 
-    print("\n[1/8] Loading sales (DATABASE sheet)")
-    sales_raw = load_sales_raw()
+    Default output: a single compact summary line. Set ETL_VERBOSE=1
+    (or pass --verbose) to see the per-step narrative used during dev.
+    """
+    import contextlib
+    import io
+    import os
+    import time
 
-    print("\n[2/8] Loading UK customers")
-    customers_uk = load_customers_uk()
+    verbose = os.environ.get("ETL_VERBOSE", "").lower() in ("1", "true", "yes") or "--verbose" in sys.argv
 
-    print("\n[3/8] Loading materials")
-    materials = load_materials()
+    def _do() -> tuple[int, dict]:
+        print("=" * 70)
+        print("MarketPulse UK — ETL")
+        print("=" * 70)
+        print("\n[1/8] Loading sales (DATABASE sheet)")
+        sales_raw = load_sales_raw()
+        print("\n[2/8] Loading UK customers")
+        customers_uk = load_customers_uk()
+        print("\n[3/8] Loading materials")
+        materials = load_materials()
+        print("\n[4/8] Filtering to actuals (null-Hl rows are accounting noise, not budget)")
+        actuals = filter_actuals(sales_raw)
+        print("\n[5/8] Netting returns")
+        actuals_netted = net_returns(actuals)
+        print("\n[6/8] Joining sales × customers × materials (UK only)")
+        joined = join_uk(actuals_netted, customers_uk, materials)
+        print("\n[7/8] Aggregating to monthly grain + holidays + external + targets")
+        monthly = aggregate_monthly(joined)
+        monthly = attach_uk_holidays(monthly)
+        monthly = attach_external(monthly)
+        validate_monthly(monthly)
+        targets = derive_targets(monthly)
+        validate_targets(targets, monthly)
+        future_targets = derive_future_targets(monthly, horizon_months=9)
+        targets = pl.concat([targets, future_targets], how="vertical")
+        print(f"  · future targets: +{len(future_targets):,} rows; total targets: {len(targets):,}")
+        print("\n[8/8] Parsing promos (per-retailer parsers + content-based classifier)")
+        promos = parse_promos_all()
+        validate_promos(promos)
+        write_snapshots(monthly, targets, promos)
+        write_meta(monthly)
+        print("\nDone.")
+        return 0, {
+            "rows": len(monthly),
+            "skus": monthly["material_id"].n_unique(),
+            "brands": monthly["brand"].n_unique(),
+            "brand_subch": monthly.group_by(["brand", "sub_channel"]).len().height,
+            "total_hl": float(monthly["Hl"].sum()),
+            "date_min": str(monthly["date"].min()),
+            "date_max": str(monthly["date"].max()),
+            "promos": len(promos),
+            "targets": len(targets),
+        }
 
-    print("\n[4/8] Filtering to actuals (null-Hl rows are accounting noise, not budget)")
-    actuals = filter_actuals(sales_raw)
+    if verbose:
+        rc, _ = _do()
+        return rc
 
-    print("\n[5/8] Netting returns")
-    actuals_netted = net_returns(actuals)
-
-    print("\n[6/8] Joining sales × customers × materials (UK only)")
-    joined = join_uk(actuals_netted, customers_uk, materials)
-
-    print("\n[7/8] Aggregating to monthly grain + holidays + external + targets")
-    monthly = aggregate_monthly(joined)
-    monthly = attach_uk_holidays(monthly)
-    monthly = attach_external(monthly)
-    validate_monthly(monthly)
-    targets = derive_targets(monthly)
-    validate_targets(targets, monthly)
-
-    # Also generate future targets for the forecast horizon (9 months)
-    future_targets = derive_future_targets(monthly, horizon_months=9)
-    targets = pl.concat([targets, future_targets], how="vertical")
-    print(f"  · future targets: +{len(future_targets):,} rows; total targets: {len(targets):,}")
-
-    print("\n[8/8] Parsing promos (per-retailer parsers + content-based classifier)")
-    promos = parse_promos_all()
-    validate_promos(promos)
-    write_snapshots(monthly, targets, promos)
-    write_meta(monthly)
-
-    print("\nDone.")
+    # Quiet mode: capture everything, only print one summary line at the end.
+    t0 = time.time()
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc, stats = _do()
+    except Exception as e:
+        sys.stdout.write(buf.getvalue())
+        print(f"\n  ✗ ETL crashed: {e!r}")
+        return 1
+    if rc != 0:
+        sys.stdout.write(buf.getvalue())
+        return rc
+    dt = time.time() - t0
+    print(f"  ✓ ETL  {stats['rows']:,} monthly rows · {stats['skus']} SKUs · "
+          f"{stats['brands']} brands · {stats['brand_subch']} brand×sub_channel · "
+          f"{stats['total_hl']:,.0f} Hl  "
+          f"({stats['date_min']} → {stats['date_max']})   [{dt:.1f}s]")
+    print(f"  ✓ ETL  promos={stats['promos']:,}  targets={stats['targets']:,}  "
+          f"(set ETL_VERBOSE=1 for full narrative)")
     return 0
 
 

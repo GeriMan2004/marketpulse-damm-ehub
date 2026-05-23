@@ -32,7 +32,7 @@ FORECAST = ROOT / "app" / "data" / "snapshots" / "forecast.parquet"
 
 def main() -> int:
     print("=" * 72)
-    print("STEP 6 — Hierarchical reconciliation (bottom-up + MinTrace shrink)")
+    print("STEP 7 — Hierarchical reconciliation (bottom-up + MinTrace shrink)")
     print("=" * 72)
 
     if not FORECAST.is_file():
@@ -55,14 +55,13 @@ def main() -> int:
     #   level 4: ()                                   — Total UK
 
     print(f"[2/4] computing bottom-up aggregates from SKU × SubChannel level")
-    bottom = fc.select([
-        "material_id", "brand", "sub_channel", "date",
-        "Hl_hat_p10", "Hl_hat_p50", "Hl_hat_p90",
-    ])
-
-    # Build the sales_channel mapping from history
-    sub_to_sales = history.select(["sub_channel", "sales_channel"]).unique()
-    bottom = bottom.join(sub_to_sales, on="sub_channel", how="left")
+    # Keep every column ensemble.py wrote (material_id, brand, sub_channel, date,
+    # horizon, Hl_hat_p{10,50,90}, sales_channel) so callers downstream can rely
+    # on the same schema before and after reconciliation.
+    bottom = fc
+    if "sales_channel" not in bottom.columns:
+        sub_to_sales = history.select(["sub_channel", "sales_channel"]).unique()
+        bottom = bottom.join(sub_to_sales, on="sub_channel", how="left")
 
     # 4 aggregate levels written out for the dashboard to read
     levels: dict[str, pl.DataFrame] = {}
@@ -168,7 +167,7 @@ def main() -> int:
     grand_total = levels["total"]["Hl_hat_p50"].sum()
     print(f"        {'TOTAL UK':<20} {grand_total:>10,.0f} Hl")
 
-    print("\nSTEP 6 done.")
+    print("\nSTEP 7 done.")
     return 0
 
 

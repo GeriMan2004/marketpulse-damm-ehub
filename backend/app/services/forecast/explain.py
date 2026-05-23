@@ -65,7 +65,7 @@ def family_for(feature: str) -> str:
 
 def main() -> int:
     print("=" * 72)
-    print("STEP 9 — SHAP explainer + driver groupings")
+    print("STEP 10 — SHAP explainer + driver groupings")
     print("=" * 72)
 
     monthly = pl.read_parquet(WIDE)
@@ -124,7 +124,7 @@ def main() -> int:
     )
     print(hero)
 
-    print("\nSTEP 9 done.")
+    print("\nSTEP 10 done.")
     return 0
 
 

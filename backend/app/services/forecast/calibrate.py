@@ -33,7 +33,7 @@ MODELS = ROOT / "models"
 
 def main() -> int:
     print("=" * 72)
-    print("STEP 7 — Per-channel conformal calibration")
+    print("STEP 8 — Per-channel conformal calibration")
     print("=" * 72)
 
     monthly = pl.read_parquet(WIDE)
@@ -95,7 +95,7 @@ def main() -> int:
     print(f"      avg PI width raw → cal: "
           f"{(fc['Hl_hat_p90'] - fc['Hl_hat_p10']).mean():.1f}  →  "
           f"{(fc['Hl_hat_p90_cal'] - fc['Hl_hat_p10_cal']).mean():.1f}")
-    print("\nSTEP 7 done.")
+    print("\nSTEP 8 done.")
     return 0
 
 

@@ -25,7 +25,7 @@ SNAPSHOTS = ROOT / "app" / "data" / "snapshots"
 
 def main() -> int:
     print("=" * 72)
-    print("STEP 10 — Anomaly detection (STL + 2.5×MAD)")
+    print("STEP 11 — Anomaly detection (STL + 2.5×MAD)")
     print("=" * 72)
 
     monthly = pl.read_parquet(WIDE)
@@ -100,7 +100,7 @@ def main() -> int:
     print(f"\n[2/3] flagged {len(out)} anomalies")
     print(f"      cause distribution: {dict(out.group_by('candidate_cause').agg(pl.len().alias('n')).iter_rows())}")
     print(f"\n[3/3] snapshots/anomalies.parquet")
-    print("\nSTEP 10 done.")
+    print("\nSTEP 11 done.")
     return 0
 
 

@@ -41,7 +41,7 @@ ESTIMATED_COST_PER_PROMO: dict[str, float] = {
 
 def main() -> int:
     print("=" * 72)
-    print("STEP 11 — Promo ROI via diff-in-diff (GROCERY)")
+    print("STEP 12 — Promo ROI via diff-in-diff (GROCERY)")
     print("=" * 72)
 
     monthly = pl.read_parquet(WIDE).filter(pl.col("sub_channel") == "GROCERY")
@@ -150,7 +150,7 @@ def main() -> int:
     print(f"\n[2/3] computed ROI for {len(out)} (promo_type, brand) tuples")
     print(out)
     print(f"\n[3/3] snapshots/promo_roi.parquet")
-    print("\nSTEP 11 done.")
+    print("\nSTEP 12 done.")
     return 0
 
 

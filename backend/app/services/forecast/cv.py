@@ -1,8 +1,13 @@
-"""Rolling-origin cross-validation — produces MAPE table for the dashboard.
+"""Rolling-origin cross-validation — direct SKU-level LightGBM diagnostics.
 
 3 folds × 3-month horizon, walk-forward. Each fold fits LGB on data through
-month T, predicts T+1..T+3, then T advances 1 month. Out-of-fold predictions
-are aggregated into snapshots/mape.parquet keyed by (brand, sub_channel, model).
+month T, predicts T+1..T+3, then T advances 1 month.
+
+This step is a SKU × sub_channel sanity check on the direct LGB. Headline
+ensemble selection now lives in STEP 5 (model_selection.py) which evaluates
+all model families at brand × sub_channel grain with WAPE as the primary
+metric. We keep mape.parquet here for legacy dashboard panels and add WAPE /
+MAE / bias / sMAPE columns so the new metrics are available everywhere.
 
 Reads:  snapshots/wide_monthly.parquet
 Writes: snapshots/mape.parquet
@@ -19,6 +24,11 @@ import polars as pl
 from category_encoders import TargetEncoder
 
 from app.services.forecast.features import build_features
+from app.services.forecast.metrics import bias as m_bias
+from app.services.forecast.metrics import mae as m_mae
+from app.services.forecast.metrics import mape as m_mape
+from app.services.forecast.metrics import smape as m_smape
+from app.services.forecast.metrics import wape as m_wape
 
 warnings.filterwarnings("ignore", message="X does not have valid feature names")
 
@@ -29,16 +39,9 @@ N_FOLDS = 3
 HORIZON = 3
 
 
-def mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    mask = y_true > 0
-    if not mask.any():
-        return float("nan")
-    return float(np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])))
-
-
 def main() -> int:
     print("=" * 72)
-    print(f"STEP 8 — Rolling-origin CV ({N_FOLDS} folds × {HORIZON}-month horizon)")
+    print(f"STEP 9 — Rolling-origin CV ({N_FOLDS} folds × {HORIZON}-month horizon)")
     print("=" * 72)
 
     monthly = pl.read_parquet(WIDE)
@@ -101,40 +104,49 @@ def main() -> int:
                 "y": float(r["Hl"]),
                 "yhat_lgb": float(p),
             })
-        fold_mape = mape(yev, yhat)
+        fold_wape = m_wape(yev, yhat)
+        fold_mape = m_mape(yev, yhat)
         print(f"      fold {fi}: train ≤ {cutoff}  eval ({len(eval_fold)} rows)  "
-              f"MAPE = {fold_mape:.3f}")
+              f"WAPE = {fold_wape:.3f}   MAPE = {fold_mape:.3f}")
 
     oof = pl.DataFrame(oof_rows)
     print(f"\n[2/3] {len(oof):,} out-of-fold predictions collected")
 
-    # Aggregate to MAPE per (model, level)
-    mape_levels = []
+    # Aggregate metrics per level — WAPE primary, MAE/bias/sMAPE secondary,
+    # MAPE last for back-compat.
+    rows = []
     for level_cols, level_name in [
         (["brand", "sub_channel"], "brand × sub_channel"),
         (["material_id", "sub_channel"], "SKU × sub_channel"),
     ]:
         agg = (
-            oof.group_by(level_cols + ["fold"])
+            oof.group_by(level_cols + ["date"])
             .agg(
                 pl.col("y").sum(),
                 pl.col("yhat_lgb").sum(),
             )
-            .with_columns(
-                abs_pct=(pl.col("y") - pl.col("yhat_lgb")).abs() / pl.col("y").clip(lower_bound=1),
-            )
         )
-        avg = float(agg["abs_pct"].mean())
-        mape_levels.append({"level": level_name, "model": "LightGBM ensemble (ours)", "mape": avg, "n_folds": N_FOLDS})
-        print(f"      {level_name:<22}  MAPE = {avg:.3f}")
+        y = agg["y"].to_numpy()
+        p = agg["yhat_lgb"].to_numpy()
+        rows.append({
+            "level": level_name,
+            "model": "LightGBM SKU-direct (ours)",
+            "wape":   m_wape(y, p),
+            "mae_hl": m_mae(y, p),
+            "bias_hl": m_bias(y, p),
+            "smape": m_smape(y, p),
+            "mape":   m_mape(y, p),
+            "n_folds": N_FOLDS,
+            "n_obs":  int(len(y)),
+        })
+        print(f"      {level_name:<22}  WAPE = {rows[-1]['wape']:.3f}   "
+              f"MAE = {rows[-1]['mae_hl']:.1f} Hl   "
+              f"bias = {rows[-1]['bias_hl']:+.1f} Hl   "
+              f"sMAPE = {rows[-1]['smape']:.3f}")
 
-    # Coverage at PI level — load production p10/p90 and compare against actuals
-    # (this is an approximation since OOF only has p50 from above)
-    coverage_rows = []
-    # Just persist MAPE for now; coverage is in calibration.parquet
-    pl.DataFrame(mape_levels).write_parquet(SNAPSHOTS / "mape.parquet")
-    print(f"\n[3/3] snapshots/mape.parquet ({len(mape_levels)} rows)")
-    print("\nSTEP 8 done.")
+    pl.DataFrame(rows).write_parquet(SNAPSHOTS / "mape.parquet")
+    print(f"\n[3/3] snapshots/mape.parquet ({len(rows)} rows)")
+    print("\nSTEP 9 done.")
     return 0
 
 
