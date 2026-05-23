@@ -62,7 +62,7 @@ demo:
 
 .PHONY: types
 types:
-	cd $(FE) && $(PNPM) openapi-typescript http://localhost:8000/openapi.json -o src/lib/api.gen.ts
+	cd $(FE) && $(PNPM) exec openapi-typescript http://localhost:8000/openapi.json -o src/lib/api.gen.ts
 
 # ---------- housekeeping ----------
 
