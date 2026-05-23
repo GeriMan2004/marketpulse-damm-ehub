@@ -50,9 +50,10 @@ export function NewsCard({
       target="_blank"
       rel="noopener noreferrer"
       className={cn(
-        "group block rounded-md px-2 py-1.5 transition-colors",
-        "hover:bg-[color:var(--muted)]",
-        relevant && "border-l-2 border-l-[color:var(--positive)] bg-[color:var(--positive-soft)]/30 pl-1.5",
+        "group block rounded-lg border bg-white px-2.5 py-2 transition-all",
+        "border-[color:var(--border)]",
+        "hover:border-neutral-300 hover:shadow-xs",
+        relevant && "border-l-2 border-l-[color:var(--positive)]",
       )}
     >
       {/* Source + time row */}

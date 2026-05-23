@@ -17,15 +17,13 @@
  *       <NavItem Inbox    | badge: critical gap count>
  *       <NavItem Promos   | badge: library size>
  *       <NavItem Ask>
- *       ─ "RECENT" ─
+ *       <h3 "Recent">                         ← shown only when there are visits
  *       <RecentRow x 5>                       ← localStorage-backed
- *       ─ "MARKET PULSE" ─
+ *       <h3 "News">
  *       <NewsCard x 20>                       ← scrolls independently
- *       ─ status footer ─
- *       <"News synced 2m ago / Model v0.3.2">
  *
- * The whole right column is one card; sections are separated by an
- * uppercase label (no dividers). Linear / Plain do the same.
+ * Sections share the same `h3 text-lg font-semibold` heading style so
+ * they read as peer groupings of the same card.
  */
 
 import Link from "next/link"
@@ -55,8 +53,6 @@ const NAV: NavItem[] = [
   { href: "/ask",    label: "Ask",    icon: MessageSquare },
 ]
 
-const MODEL_VERSION = "v0.3.2"
-
 // ──────────────────────────────────────────────────────────────────────────
 
 export function Sidebar() {
@@ -83,7 +79,7 @@ export function Sidebar() {
   const recents = useRecentDecisions()
 
   // News (SWR, 5-min refresh; degrades silently when backend isn't up)
-  const { articles, updatedAt, isLoading: newsLoading } = useMarketPulse()
+  const { articles, isLoading: newsLoading } = useMarketPulse()
 
   return (
     <aside className="hidden lg:flex sticky top-0 h-screen w-[304px] shrink-0 bg-neutral-200">
@@ -182,9 +178,13 @@ export function Sidebar() {
             </nav>
 
             {recents.length > 0 && (
-              <section className="mt-5">
-                <SectionLabel>Recent</SectionLabel>
-                <ul className="mt-1 flex flex-col gap-0.5">
+              <section className="mt-6">
+                <div className="px-2 pb-2">
+                  <h3 className="text-lg font-semibold tracking-tight text-neutral-900">
+                    Recent
+                  </h3>
+                </div>
+                <ul className="flex flex-col gap-0.5">
                   {recents.map((r) => (
                     <li key={`${r.sku}-${r.sub_channel}`}>
                       <RecentRow recent={r} />
@@ -195,27 +195,30 @@ export function Sidebar() {
             )}
           </div>
 
-          {/* Market Pulse — flex-1, scrolls independently */}
-          <section className="flex-1 min-h-0 flex flex-col mt-5 px-3">
-            <div className="flex items-baseline justify-between px-2">
-              <SectionLabel>Market Pulse</SectionLabel>
+          {/* News — flex-1, scrolls independently. Heading style matches
+              "Workflow" up top so the two read as peer sections. */}
+          <section className="flex-1 min-h-0 flex flex-col mt-6 px-3 pb-3">
+            <div className="flex items-baseline justify-between px-2 pb-2">
+              <h3 className="text-lg font-semibold tracking-tight text-neutral-900">
+                News
+              </h3>
               {articles.length > 0 && (
-                <span className="text-[9.5px] text-neutral-400 tabular-nums">
+                <span className="text-[11px] text-neutral-400 tabular-nums">
                   {articles.length}
                 </span>
               )}
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto mt-1 -mx-1 px-1">
+            <div className="flex-1 min-h-0 overflow-y-auto -mx-1 px-1">
               {newsLoading && articles.length === 0 ? (
-                <div className="space-y-1 px-1 py-1">
-                  <Skeleton className="h-12 w-full rounded-md" />
-                  <Skeleton className="h-12 w-full rounded-md" />
-                  <Skeleton className="h-12 w-full rounded-md" />
+                <div className="space-y-1.5 px-1 py-1">
+                  <Skeleton className="h-16 w-full rounded-lg" />
+                  <Skeleton className="h-16 w-full rounded-lg" />
+                  <Skeleton className="h-16 w-full rounded-lg" />
                 </div>
               ) : articles.length === 0 ? (
                 <NewsEmptyHint />
               ) : (
-                <ul className="flex flex-col gap-0.5">
+                <ul className="flex flex-col gap-1.5">
                   {articles.slice(0, 20).map((a) => (
                     <li key={a.id}>
                       <NewsCard article={a} />
@@ -225,18 +228,6 @@ export function Sidebar() {
               )}
             </div>
           </section>
-
-          {/* Status footer */}
-          <footer className="border-t border-neutral-200 px-5 py-3 text-[10.5px] leading-tight text-neutral-500 mt-2">
-            <div className="flex items-center justify-between">
-              <span>News</span>
-              <span className="tabular-nums">{formatSyncedAgo(updatedAt)}</span>
-            </div>
-            <div className="flex items-center justify-between mt-0.5">
-              <span>Model</span>
-              <span className="font-medium text-neutral-700 tabular-nums">{MODEL_VERSION}</span>
-            </div>
-          </footer>
         </div>
       </div>
     </aside>
@@ -283,14 +274,6 @@ function NavLink({
   )
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="text-[10.5px] font-medium tracking-wider uppercase text-neutral-500">
-      {children}
-    </div>
-  )
-}
-
 function RecentRow({ recent }: { recent: ReturnType<typeof useRecentDecisions>[number] }) {
   const periodPart = recent.period ? `?period=${encodeURIComponent(recent.period)}` : ""
   const href =
@@ -329,18 +312,6 @@ function NewsEmptyHint() {
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
-
-function formatSyncedAgo(iso: string | null): string {
-  if (!iso) return "—"
-  const ms = Date.now() - new Date(iso).getTime()
-  if (Number.isNaN(ms)) return "—"
-  const m = Math.round(ms / 60_000)
-  if (m < 1) return "just now"
-  if (m < 60) return `${m}m ago`
-  const h = Math.round(m / 60)
-  if (h < 24) return `${h}h ago`
-  return `${Math.round(h / 24)}d ago`
-}
 
 function shortenChannel(label: string): string {
   const map: Record<string, string> = {
