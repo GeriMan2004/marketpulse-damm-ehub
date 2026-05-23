@@ -5,8 +5,9 @@
 #
 # Everything else is a piece of the above — see `make help`.
 
-SHELL := /bin/bash
-PY    := PYTHONHASHSEED=42 uv run python   # deterministic anonymization
+SHELL  := /bin/bash
+PY_ENV := PYTHONHASHSEED=42 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1
+PY     := $(PY_ENV) uv run python   # deterministic anonymization + stable local CPU inference
 
 BE     := backend
 FE     := web
