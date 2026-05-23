@@ -8,7 +8,7 @@ A tool that forecasts UK sales, detects deviations vs. budget, and recommends co
 - **[DATA.md](DATA.md)** — Real audit results, ETL, anonymization map, hero SKU decision
 - **[ML.md](ML.md)** — Modeling strategy: training plan, ensemble, reconciliation, anomalies, CV
 - **[STACK.md](STACK.md)** — Tech stack with rationale, MongoDB collections
-- **[AGENT.md](AGENT.md)** — LLM routing (fast Llama / deep Kimi-Instruct / fallback), tools, schemas, snapshot mode
+- **[AGENT.md](AGENT.md)** — LLM routing (fast Llama / deep Kimi-Instruct / fallback), tools, schemas, ML output caching
 - **[PAGES.md](PAGES.md)** — 7-page spec with pinned filter contract and hero deep-link
 - **[FRONTEND.md](FRONTEND.md)** — React build guide (shadcn + Magic UI + Tremor, flat aesthetic)
 - **[PLAN.md](PLAN.md)** — 24h execution plan, role split, risks, done checklist
@@ -58,22 +58,53 @@ A tool that forecasts UK sales, detects deviations vs. budget, and recommends co
    └──────────────────────────────────────────────────────┘
 ```
 
-## 🚀 Run
+## 🚀 First-time setup (new clone, e.g. teammate)
 
 ```bash
-make doctor       # checks: hf token, uv, pnpm, raw data present, mongo reachable
-make install      # backend (uv sync) + frontend (pnpm install)
-make data         # raw Excel → snapshots/*.parquet
-make train        # fit ensemble, write forecast/anomalies/promo_roi snapshots
-make demo         # backend on :8000 + frontend on :5173, interleaved logs
+git clone https://github.com/GeriMan2004/marketpulse-damm-ehub.git
+cd marketpulse-damm-ehub
+
+# 1. Install local tooling
+brew install uv pnpm huggingface-cli      # macOS — Linux/Win equivalents apply
+
+# 2. Things you need from your teammate over a private channel:
+#    a) HF token with EHubBarcelona org access
+#    b) The two Damm Excel files (UK DATA.xlsx, Damm Trade Plan - promotions.xlsx)
+cp .env.example backend/.env              # paste HF_TOKEN inside
+cp /path/to/Excels/*.xlsx backend/app/data/raw/
+
+# 3. One-shot install + types + sanity check
+make first-run
+
+# 4. Run it
+make demo                                 # backend :8000  +  frontend :5173
 ```
 
 Open <http://localhost:5173>. Backend OpenAPI at <http://localhost:8000/docs>.
 
-**One-time prerequisites:**
+### Day-to-day commands
 
-1. Copy `UK DATA.xlsx` and `Damm Trade Plan - promotions.xlsx` into `backend/app/data/raw/` (gitignored).
-2. `hf auth login` with a token that has the **"Make calls to Inference Providers"** permission (fine-grained token, scope it to the `EHubBarcelona` org).
-3. `cp .env.example backend/.env` and fill in `HF_TOKEN` if you want it explicit (otherwise `huggingface_hub` reads `~/.cache/huggingface/token`).
+```bash
+make demo         backend + frontend together
+make doctor       check prereqs (HF, uv, pnpm, data, mongo)
+make types        regenerate frontend TS types from live backend OpenAPI
+make data         run ETL  (raw Excel → snapshots/*.parquet) — Phase 1+
+make train        fit forecast ensemble + write snapshots    — Phase 2+
+make help         everything else
+```
 
-See [Makefile](Makefile) for every available target.
+### HF token resolution
+
+The backend resolves the HF token in this order:
+1. `HF_TOKEN` env var (from `backend/.env`)
+2. `~/.cache/huggingface/token` (set by `hf auth login`)
+
+Either works. `.env` is easier for fresh clones; the cache is fine for single-user dev.
+
+### Data + secrets — what NEVER goes in the repo
+
+- The two `.xlsx` files (confidential per the brief)
+- `backend/.env` (HF token)
+- Anything under `backend/app/data/raw/`, `backend/app/data/snapshots/`, `backend/app/data/cache/`
+
+All covered by [.gitignore](.gitignore).

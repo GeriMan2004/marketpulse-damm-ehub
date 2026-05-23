@@ -182,7 +182,7 @@ frontend/
 - Every fetch hook returns `<Skeleton />` while loading (shadcn `Skeleton`).
 - Wrap each page in a `<Suspense>` boundary and an `<ErrorBoundary>` showing a friendly toast on error.
 - Demo data is **pre-computed at H22**: the backend reads pre-baked Parquet/Mongo snapshots, no live HF call during the live demo (chat is the only exception — it has a stub fallback).
-- Hidden `⌘ + .` keyboard shortcut swaps the API client between "live" and "snapshot" mode.
+- The frontend **always** calls the live backend. No static-JSON fallback. If the backend is down it's a real error, surfaced via a Sonner toast.
 
 ---
 

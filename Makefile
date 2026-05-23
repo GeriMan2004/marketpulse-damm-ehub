@@ -1,25 +1,65 @@
 # MarketPulse UK — dev ergonomics
 #
-# Usage:
-#   make install     install backend + frontend deps
-#   make data        run the ETL pipeline (raw Excel → snapshots/*.parquet)
-#   make train       fit forecast ensemble + write models + snapshots
-#   make backend     run FastAPI on :8000 (auto-reload)
-#   make frontend    run Vite on :5173
-#   make demo        run both, logs interleaved (the demo command)
-#   make types       regenerate frontend TS types from /openapi.json
-#   make snapshot    write a deterministic snapshot bundle for offline demo
-#   make clean       remove caches, build artifacts
-#   make doctor      check that hf, mongo, hf token, and python are all ready
+# First time:   make first-run     (doctor + install + types)
+# Every time:   make demo          (backend on :8000 + frontend on :5173)
+#
+# Everything else is a piece of the above — see `make help`.
 
 SHELL := /bin/bash
-PY    := PYTHONHASHSEED=42 uv run python   # deterministic anonymization hashes for our scripts only
+PY    := PYTHONHASHSEED=42 uv run python   # deterministic anonymization
 
-BE  := backend
-FE  := frontend
-PNPM := pnpm
+BE     := backend
+FE     := frontend
+PNPM   := pnpm
 
-# ---------- install ----------
+# ──────────────────────────────────────────────────────────────────────────────
+# Top-level entry points
+# ──────────────────────────────────────────────────────────────────────────────
+
+.PHONY: help
+help:
+	@echo ""
+	@echo "MarketPulse UK — common commands"
+	@echo ""
+	@echo "  make first-run    one-shot for a fresh clone (doctor + env + install + types)"
+	@echo "  make demo         start backend + frontend together"
+	@echo "  make doctor       check prereqs (HF, uv, pnpm, data, mongo)"
+	@echo ""
+	@echo "  make install      install backend + frontend deps"
+	@echo "  make types        regenerate frontend TS types from live OpenAPI"
+	@echo "  make data         run ETL (raw Excel → snapshots/*.parquet)"
+	@echo "  make train        fit forecast ensemble + write snapshots"
+	@echo ""
+	@echo "  make backend      run FastAPI on :8000 only"
+	@echo "  make frontend     run Vite on :5173 only"
+	@echo "  make clean        remove caches, build artifacts"
+	@echo ""
+
+# First-run for a teammate cloning the repo
+.PHONY: first-run
+first-run: env doctor install types
+	@echo ""
+	@echo "✅ first-run setup complete. Now: make demo"
+	@echo ""
+
+# Run both servers
+.PHONY: demo
+demo: install
+	@trap 'kill 0' INT TERM EXIT; \
+	$(MAKE) -j2 backend frontend
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Bootstrap
+# ──────────────────────────────────────────────────────────────────────────────
+
+.PHONY: env
+env:
+	@if [ ! -f $(BE)/.env ]; then \
+		cp .env.example $(BE)/.env && \
+		echo "→ created $(BE)/.env from .env.example (fill in HF_TOKEN, or run \`hf auth login\`)"; \
+	else \
+		echo "→ $(BE)/.env already exists"; \
+	fi
 
 .PHONY: install install-be install-fe
 install: install-be install-fe
@@ -28,57 +68,65 @@ install-be:
 	cd $(BE) && uv sync
 
 install-fe:
-	cd $(FE) && $(PNPM) install
+	cd $(FE) && $(PNPM) install --silent
 
-# ---------- data + training ----------
+.PHONY: doctor
+doctor:
+	@echo "→ HF CLI...";  command -v hf  >/dev/null && hf --version 2>&1   || echo "  ❌ install: brew install huggingface-cli"
+	@echo "→ uv...";      command -v uv  >/dev/null && uv --version        || echo "  ❌ install: brew install uv"
+	@echo "→ pnpm...";    command -v pnpm >/dev/null && pnpm --version     || echo "  ❌ install: brew install pnpm"
+	@echo "→ HF token..."; \
+		if [ -n "$$HF_TOKEN" ] || ([ -f $(BE)/.env ] && grep -q '^HF_TOKEN=hf_' $(BE)/.env); then \
+			echo "  ✓ HF_TOKEN set in env or .env"; \
+		elif [ -s ~/.cache/huggingface/token ]; then \
+			echo "  ✓ token cached in ~/.cache/huggingface/token (from \`hf auth login\`)"; \
+		else \
+			echo "  ❌ no token — either set HF_TOKEN in $(BE)/.env or run \`hf auth login\`"; \
+		fi
+	@echo "→ raw data..."; \
+		test -d $(BE)/app/data/raw && ls $(BE)/app/data/raw/*.xlsx 2>/dev/null | wc -l | awk '{ if ($$1==0) print "  ❌ no xlsx files — get them from your teammate"; else print "  ✓ " $$1 " xlsx file(s) present" }'
+	@echo "→ MongoDB..."; nc -z localhost 27017 2>/dev/null && echo "  ✓ reachable on :27017" || echo "  ⚠️  optional — needed only once persistence lands"
 
-.PHONY: data train snapshot
+# ──────────────────────────────────────────────────────────────────────────────
+# Frontend types from live backend OpenAPI
+# ──────────────────────────────────────────────────────────────────────────────
+
+.PHONY: types
+types:
+	@cd $(BE) && (uv run uvicorn app.main:app --port 8000 --log-level error &) ; sleep 1 ; \
+	cd ../$(FE) && $(PNPM) exec openapi-typescript http://localhost:8000/openapi.json -o src/lib/api.gen.ts ; \
+	pkill -f "uvicorn app.main:app --port 8000" 2>/dev/null || true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Data + training (Phase 1+ will fill these in)
+# ──────────────────────────────────────────────────────────────────────────────
+
+.PHONY: data train
 data:
 	cd $(BE) && $(PY) -m app.services.etl
 
 train: data
 	cd $(BE) && $(PY) -m app.services.forecast.train
 
-snapshot: train
-	cd $(BE) && $(PY) -m app.services.snapshot.build
+# ──────────────────────────────────────────────────────────────────────────────
+# Individual servers
+# ──────────────────────────────────────────────────────────────────────────────
 
-# ---------- servers ----------
-
-.PHONY: backend frontend demo
+.PHONY: backend frontend
 backend:
 	cd $(BE) && uv run uvicorn app.main:app --reload --port 8000
 
 frontend:
-	cd $(FE) && $(PNPM) dev
+	cd $(FE) && $(PNPM) dev --host 127.0.0.1
 
-# Run both with interleaved logs — the demo command
-demo:
-	@trap 'kill 0' INT TERM EXIT; \
-	$(MAKE) backend & \
-	$(MAKE) frontend & \
-	wait
+# ──────────────────────────────────────────────────────────────────────────────
+# Housekeeping
+# ──────────────────────────────────────────────────────────────────────────────
 
-# ---------- frontend types ----------
-
-.PHONY: types
-types:
-	cd $(FE) && $(PNPM) exec openapi-typescript http://localhost:8000/openapi.json -o src/lib/api.gen.ts
-
-# ---------- housekeeping ----------
-
-.PHONY: clean doctor
+.PHONY: clean
 clean:
-	find . -type d -name __pycache__ -exec rm -rf {} +
-	find . -type d -name .ruff_cache -exec rm -rf {} +
-	find . -type d -name .mypy_cache -exec rm -rf {} +
-	rm -rf $(FE)/dist $(FE)/.vite $(FE)/node_modules/.vite
+	find . -type d -name __pycache__       -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name .ruff_cache       -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name .mypy_cache       -exec rm -rf {} + 2>/dev/null || true
+	rm -rf $(FE)/dist $(FE)/.vite
 	rm -rf $(BE)/app/data/cache/*.parquet
-
-doctor:
-	@echo "→ HF CLI..."; command -v hf >/dev/null && hf --version || echo "  ❌ install via: pip3 install --break-system-packages -U huggingface_hub"
-	@echo "→ HF token..."; test -s ~/.cache/huggingface/token && echo "  ✓ token present" || echo "  ❌ run: hf auth login"
-	@echo "→ HF whoami..."; hf auth whoami 2>/dev/null || echo "  ❌ token invalid"
-	@echo "→ uv...";  command -v uv  >/dev/null && uv --version  || echo "  ❌ install via: brew install uv"
-	@echo "→ pnpm..."; command -v pnpm >/dev/null && pnpm --version || echo "  ❌ install via: brew install pnpm"
-	@echo "→ raw data..."; test -d $(BE)/app/data/raw && ls $(BE)/app/data/raw/*.xlsx 2>/dev/null | wc -l | awk '{print "  ✓ " $$1 " xlsx file(s) present"}' || echo "  ❌ copy UK DATA.xlsx + 'Damm Trade Plan - promotions.xlsx' to $(BE)/app/data/raw/"
-	@echo "→ MongoDB..."; nc -z localhost 27017 2>/dev/null && echo "  ✓ reachable on :27017" || echo "  ⚠️  optional — set MONGO_URI in .env if using a different host"

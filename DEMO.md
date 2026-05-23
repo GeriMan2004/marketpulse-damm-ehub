@@ -111,7 +111,7 @@ Every checklist item appears in the live demo without us pointing at it.
 
 - **Pre-computed at H22**: all forecasts + scenarios + SHAP results are baked into `snapshots/*.parquet`. Backend reads from snapshots by default; live HF calls only happen on the chat page.
 - **Hero SKU is hard-coded** as a deep-link constant. `Estrella Damm × Off-trade grocery` is `?brand=ESTRELLA+DAMM&sub_channel=GROCERY` in the URL — bookmarked. If filters drift during demo, one click resets.
-- **Snapshot mode toggle**: `⌘ + .` swaps the API client's base URL from `http://localhost:8000` to a static `/snapshots/*.json` mock. One keystroke saves the demo if venue Wi-Fi dies.
+- **Live backend always.** No static-JSON fallback in the FE. If venue Wi-Fi dies, the LLM calls fail and we lean on the **backup video** instead.
 - **Backup video**: record a 2-minute happy-path screen capture the morning of the demo. Stored in `/demo/backup.mp4` locally (not committed).
 - **`make demo`**: single command starts both servers with logs in one terminal. Don't restart live.
 - **Two browser tabs ready**: `http://localhost:5173` on the projector; `http://localhost:8000/docs` on a second screen for the inevitable "can we see the API?" question.

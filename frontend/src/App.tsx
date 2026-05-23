@@ -1,4 +1,3 @@
-import { useEffect } from "react"
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -107,17 +106,6 @@ function Overview() {
 }
 
 export default function App() {
-  useEffect(() => {
-    function handler(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === ".") {
-        e.preventDefault()
-        console.log("[snapshot mode toggle]")
-      }
-    }
-    window.addEventListener("keydown", handler)
-    return () => window.removeEventListener("keydown", handler)
-  }, [])
-
   return (
     <QueryClientProvider client={queryClient}>
       <div className="min-h-screen">
@@ -126,7 +114,7 @@ export default function App() {
             <span className="text-lg font-semibold tracking-tight">MarketPulse UK</span>
             <span className="text-xs text-muted-foreground">Damm × Engineering Hub</span>
           </div>
-          <span className="text-xs text-muted-foreground">⌘+. snapshot mode</span>
+          <a href="http://localhost:8000/docs" target="_blank" className="text-xs text-muted-foreground hover:text-foreground transition">/docs</a>
         </header>
 
         <main className="px-8 py-6 max-w-7xl mx-auto">

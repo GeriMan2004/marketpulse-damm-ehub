@@ -71,29 +71,19 @@ resp = call_with_fallback("deep", messages=msgs, max_tokens=800, response_format
 
 ---
 
-## 🛟 Snapshot mode (offline demo safety)
+## 💾 ML output caching (NOT the same as fake data)
 
-When the FE keyboard shortcut `⌘+.` flips snapshot mode on, the API client base URL swaps from `http://localhost:8000` to `/snapshots/` (static JSON served by Vite). Every endpoint has a parallel snapshot file:
+Training-time outputs are written to Parquet under `backend/app/data/snapshots/`:
 
-| Endpoint | Snapshot file |
-|---|---|
-| `GET /api/meta` | `frontend/public/snapshots/meta.json` |
-| `GET /api/kpis?…` | `frontend/public/snapshots/kpis.json` |
-| `GET /api/forecast?sku=K015600&sub_channel=GROCERY&granularity=month` | `frontend/public/snapshots/forecast__K015600__GROCERY__month.json` |
-| `GET /api/gap?…` | `frontend/public/snapshots/gap.json` |
-| `GET /api/drivers?…` | `frontend/public/snapshots/drivers__K015600__GROCERY__2026-11.json` |
-| `GET /api/promos/roi?…` | `frontend/public/snapshots/promo_roi.json` |
-| `POST /api/simulate` | `frontend/public/snapshots/simulate__<request_hash>.json` (hero presets only) |
-| `POST /api/recommend` | `frontend/public/snapshots/recommend__K015600__GROCERY__2026-11.json` |
-| `POST /api/chat` | not snapshotted — chat falls back to a hardcoded canned dialog (`frontend/src/components/chat/canned.ts`) |
-| `POST /api/explain-view` | `frontend/public/snapshots/explain__<page>__<filters_hash>.json` |
+| File | Produced by | Read by |
+|---|---|---|
+| `forecast.parquet` | `make train` (LightGBM ensemble + reconciliation) | `/api/forecast`, `/api/gap`, `/api/kpis` |
+| `anomalies.parquet` | STL + MAD over historical residuals | `/api/forecast` (markers) |
+| `promo_roi.parquet` | CausalImpact on GROCERY promos | `/api/promos/roi` |
+| `shap_explainer.pkl` | SHAP TreeExplainer fitted on the p50 LightGBM | `/api/drivers` |
+| `mape.parquet` | Rolling-origin CV results | `/forecast` accuracy panel |
 
-`make snapshot` (see [Makefile](Makefile)) runs `backend/app/services/snapshot/build.py` which:
-1. Calls every endpoint with the **hero filters** (`ESTRELLA DAMM × GROCERY × 2026-11`) plus a handful of common variants.
-2. Writes the responses to `frontend/public/snapshots/`.
-3. Asserts every snapshot validates against its Pydantic schema before writing.
-
-The snapshot bundle is committed to the repo (it's anonymized output, not source data) so anyone cloning can run `make frontend` standalone and see a working demo.
+These are **the live system's storage layer**, not demo fallbacks. The frontend always calls the live backend; the backend reads these caches because retraining on every request is pointless. There is no frontend-side static-JSON fallback.
 
 ---
 
@@ -496,7 +486,7 @@ bubble; `tool_result` updates the chip from "running…" to its `result_summary`
 | LLM hallucinated SKU not in master | Validate against `meta_lookup` | Re-prompt with `Available SKUs: [...]` |
 | LLM JSON doesn't match schema | Instructor retries with validation error in context | After 2 retries, return canned "couldn't generate, here is the raw forecast" |
 | Tool returned empty (e.g. no past promos on channel) | Empty list check in tool | Agent told: "No historical promos on this channel — recommend conservatively" |
-| All providers down | Health-check on `/api/meta` | Switch every endpoint to **snapshot mode** (pre-baked Parquet recs) |
+| All providers down | Health-check on `/api/meta` | Surface a toast on the FE; show the last cached `recommendations` doc from MongoDB if one exists for this key |
 | All else fails | — | Hardcoded recommendation per hero SKU in `backend/app/services/agent.py:HERO_FALLBACK` |
 
 ---

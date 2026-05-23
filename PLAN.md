@@ -184,9 +184,8 @@ Everyone converges H22–H24 on the demo SKU narrative.
 
 ### H20–H22 · Polish + storytelling (team)
 - Chat page: Vercel AI SDK `useChat` against `/api/chat` SSE, tool-call breadcrumbs visible
-- **`make snapshot`** writes the offline JSON bundle (see [AGENT.md §Snapshot mode](AGENT.md)) — verify hero deep-link works in snapshot mode
+- Verify the hero deep-link reaches every page cleanly: `/forecast?brand=ESTRELLA+DAMM&sub_channel=GROCERY&from=2026-04&to=2026-12`
 - Hero is **already pinned** to `ESTRELLA DAMM × GROCERY` — rehearse the narrative from [DEMO.md](DEMO.md)
-- Hidden `⌘ + .` shortcut wired and tested
 - Tooltips on every chart, footer with documented external sources
 - Fix the 5 worst-looking things in the UI
 
@@ -214,7 +213,7 @@ Everyone converges H22–H24 on the demo SKU narrative.
 | CORS / SSE issues | Open CORS in dev; test SSE end-to-end at H14, not at H20 |
 | Frontend behind schedule | Cut Magic UI extras — keep just `NumberTicker`. Plain shadcn + Tremor still looks great |
 | Scope creep on FE | Re-read FRONTEND.md every 4h; the page list is closed at 7 |
-| Live demo dies | Backup video + snapshot mode + hero deep-link |
+| Live demo dies | Backup video + hero deep-link + run `make demo` from a known-good commit |
 | Two-process startup confusion at demo | `make demo` starts both with interleaved logs |
 | Anonymization drift between runs | `PYTHONHASHSEED=42` enforced in Makefile and .env.example |
 
@@ -238,7 +237,7 @@ Plus our edges:
 - [ ] Promo ROI ranking with CausalImpact confidence levels
 - [ ] "Explain this view" button on every data page
 - [ ] Two foundation models integrated: Chronos-Bolt (cold-start) + Moirai-1.1 (GROCERY with covariates)
-- [ ] Snapshot mode (`⌘+.`) verified — frontend works fully offline
+- [ ] Frontend always uses live backend — no static JSON fallback paths anywhere
 - [ ] React frontend with shadcn + Magic UI polish (flat, all MIT)
 - [ ] Anonymization stable across runs (`PYTHONHASHSEED=42`)
 - [ ] MongoDB scenarios + chat history persisted
