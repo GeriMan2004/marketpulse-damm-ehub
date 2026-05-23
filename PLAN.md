@@ -98,15 +98,18 @@ Everyone converges H22–H24 on the demo SKU narrative.
 ### H0–H2 · Setup & data understanding (team)
 - Repo: `backend/` + `frontend/`, `uv init` in backend, README skeleton
 - Backend engineer: `uv add fastapi uvicorn pydantic`; spin up `/api/meta` returning hardcoded data; confirm OpenAPI at `/docs`
-- Data engineer: load all Damm CSVs into Polars; one-pass EDA in a marimo notebook
-- Decide granularity: **week × SKU × channel**
-- Define target column (units vs revenue — confirm)
+- Data engineer: load `UK DATA.xlsx` (sheets `DATABASE`, `MaterialData`, `CUSTOMERS`) + `Damm Trade Plan - promotions.xlsx` (per-retailer sheets) into Polars. **See [DATA.md](DATA.md) for column dictionary and ETL strategy.**
+- Granularity confirmed: **monthly primary** (sales data is monthly in `AÑO CALENDARIO`), **weekly secondary** (disaggregated using promo plan)
+- Target: `Hl` (hectoliters); secondary metric `Venta Neta` for ROI
+- Anonymize retailer names via `backend/app/services/anonymize.py`
 - **Exit:** typed Polars frames; join keys agreed; FastAPI hello-world live.
 
 ### H2–H6 · ETL + external enrichment (data) · API scaffolding (backend)
 **Data engineer:**
-- Clean + join sales × promo plan × budget into one wide weekly frame
-- Features: lags (1, 2, 4, 8, 13, 26, 52w), rolling means/std (4, 13w), UK holidays, Open-Meteo weather, pytrends, ONS retail index
+- Clean per [DATA.md](DATA.md): parse `Abr.25`-style periods, filter `Pais == "Reino Unido"`, join DATABASE × MaterialData × CUSTOMERS
+- Melt the wide promo Excel sheets into long `promos.parquet` (one row per channel × SKU × ISO week × event)
+- Build a wide monthly frame **and** a wide weekly frame (weekly = monthly disaggregated by promo plan)
+- Features: monthly lags (1, 3, 6, 12), rolling means (3, 6 months), UK holidays, Open-Meteo weather, pytrends, ONS retail index
 - Pandera validation; snapshot to Parquet
 - Push raw + enriched frames into MongoDB via the MCP for live querying
 
@@ -138,12 +141,13 @@ Everyone converges H22–H24 on the demo SKU narrative.
 - Promo ROI table: lift × cost → ranked
 - Anomaly detection on history (z-score on rolling residuals)
 
-**Backend / LLM engineer:**
-- `simulate_promo(sku, channel, weeks, discount_pct)` function — wired to `/api/simulate`
+**Backend / LLM engineer:** *(see [AGENT.md](AGENT.md) for full spec)*
+- Pydantic schemas in `backend/app/schemas/` (ForecastSeries, GapItem, Driver, PromoROI, SimulationResult, RecommendationResponse, ExplainViewSummary)
+- All 7 smolagents tools implemented (`forecast`, `compare_vs_budget`, `explain_gap`, `simulate_promo`, `rank_promos`, `anomalies`, `meta_lookup`) — wired to `/api/simulate`, `/api/recommend`, etc.
 - Alibi counterfactual: minimum feature change to close the gap
-- smolagents agent with tools: `forecast`, `compare_vs_budget`, `explain_gap`, `simulate_promo`, `rank_promos`
-- Instructor schema for 3 scenarios (conservative / balanced / aggressive) — wired to `/api/recommend`
-- `/api/chat` SSE streaming from smolagents
+- HF `InferenceClient` configured for **Kimi K2.6** (Novita) primary, **Llama 3.3 70B** (Groq) fallback via `LLM_PRIMARY` env flag
+- Instructor wrapping enforces `RecommendationResponse` (3-scenario) schema
+- `/api/chat` SSE streaming with typed events (`thought` / `tool_call` / `tool_result` / `token` / `done`)
 - **Exit:** every backend endpoint returns real, useful data.
 
 ### H12–H16 · Frontend foundations (FE) ⟵ starts in parallel with H10–H13
@@ -156,13 +160,13 @@ Everyone converges H22–H24 on the demo SKU narrative.
 - **Exit:** Overview page works end-to-end against the backend.
 
 ### H16–H20 · Frontend build-out (FE) · ML polish (ML)
-**Frontend engineer:**
-- Forecast detail page with Plotly area + confidence band
-- Drivers page with Plotly SHAP waterfall + Magic UI `TextAnimate` narrative
-- Promos page with causal charts + TanStack Table ROI ranking
-- Simulator page with shadcn sliders + Magic UI `ShimmerButton` → re-fetch → new forecast chart
-- Recommendations page with 3 shadcn cards; recommended one wrapped in Magic UI `BorderBeam`
-- "Explain this view" button (calls `/api/recommend` with current page context)
+**Frontend engineer:** *(see [PAGES.md](PAGES.md) for per-page spec)*
+- Forecast detail page with Plotly area + confidence band + anomaly markers
+- Drivers page with Plotly SHAP waterfall + Magic UI `TextAnimate` narrative + causal evidence sheet
+- Promos page with TanStack Table ROI ranking + per-promo causal detail sheet
+- Simulator page with shadcn sliders + Magic UI `ShimmerButton` → re-fetch → new forecast chart, save-as-scenario
+- Recommendations page with 3 shadcn cards; LLM-recommended one wrapped in Magic UI `BorderBeam`
+- "Explain this view" button (calls `/api/explain-view` with current page+filters+visible state)
 
 **ML engineer (in parallel):**
 - Tighten ensemble weights using validation MAPE

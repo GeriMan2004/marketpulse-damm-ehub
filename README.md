@@ -5,8 +5,11 @@ A tool that forecasts UK sales, detects deviations vs. budget, and recommends co
 ## 📚 Docs
 
 - **[CHALLENGE.md](CHALLENGE.md)** — What the brief asks for, deliverables, judging criteria
+- **[DATA.md](DATA.md)** — Source files, columns, ETL plan, anonymization rules
 - **[STACK.md](STACK.md)** — Tech stack with reasoning per layer
-- **[FRONTEND.md](FRONTEND.md)** — React frontend details (shadcn, Magic UI, Tremor, pages)
+- **[AGENT.md](AGENT.md)** — Agent design: Kimi K2.6 + smolagents tools + Pydantic schemas + prompts
+- **[PAGES.md](PAGES.md)** — Per-page spec for the 7 frontend pages
+- **[FRONTEND.md](FRONTEND.md)** — React frontend details (shadcn, Magic UI, Tremor)
 - **[PLAN.md](PLAN.md)** — 24h execution plan with hour-by-hour timeline
 - **[DEMO.md](DEMO.md)** — Demo narrative and rehearsal script
 

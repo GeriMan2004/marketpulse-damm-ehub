@@ -46,7 +46,7 @@ Every choice has a reason tied to a judging criterion. ⭐ = primary pick.
 - ⭐ **[huggingface_hub InferenceClient](https://huggingface.co/docs/huggingface_hub/guides/inference)** — native HF client, OpenAI-compatible.
 - ⭐ **[smolagents](https://github.com/huggingface/smolagents)** — lightweight HF agent. Tools: `forecast()`, `simulate_promo()`, `compare_vs_budget()`, `recommend()`.
 - ⭐ **[Instructor](https://github.com/jxnl/instructor)** — Pydantic-typed LLM outputs → reliable structured recommendations (the 3 scenarios).
-- ⭐ Model: **`meta-llama/Llama-3.3-70B-Instruct`** (fallback: `mistralai/Mistral-Small-3.1-24B-Instruct-2503`).
+- ⭐ Primary model: **`moonshotai/Kimi-K2.6`** (Novita provider, 1.1T params, strongest agentic reasoning on HF Inference today). Fallback: **`meta-llama/Llama-3.3-70B-Instruct`** (Groq, fast & cheap). Switchable via `LLM_PRIMARY` env flag — see [AGENT.md](AGENT.md).
 
 ---
 
@@ -137,9 +137,10 @@ Forecasting    : MLForecast(LightGBM) + StatsForecast(AutoARIMA)
 Causal         : tfcausalimpact (per-promo lift)
 Explainable    : SHAP (deviation drivers) + Alibi (counterfactuals)
                  + anomaly detection on history (z-score / Merlion)
-LLM layer      : HF InferenceClient → Llama-3.3-70B
+LLM layer      : HF InferenceClient → Kimi-K2.6 (Novita) — Llama-3.3 fallback
                  + smolagents (forecast/simulate_promo/compare_budget tools)
                  + Instructor (3-scenario structured recommendations)
+                 → full design in AGENT.md
 Storage        : Parquet (raw + snapshots) + MongoDB (live state via MCP)
 
 Backend        : FastAPI + Pydantic v2 + Uvicorn + SSE for chat
@@ -166,7 +167,7 @@ Dev            : uv + pnpm + ruff + biome
 3. **Hierarchical reconciliation** makes the forecast usable as a business plan — CPG judges recognize this immediately.
 4. **tfcausalimpact** delivers the promotion analysis checklist item in <50 LOC.
 5. **SHAP + Alibi** map directly to *explain deviations* and *recommend actions* scoring criteria.
-6. **smolagents + Llama 3.3 + Instructor** = structured 3-scenario business recommendations, not free-form chat output.
+6. **smolagents + Kimi K2.6 + Instructor** = structured 3-scenario business recommendations, not free-form chat output. Kimi K2 is purpose-built for agentic tool-use; Llama-3.3 stays as a fast fallback.
 7. **FastAPI** keeps every Python ML call intact while exposing a clean typed REST surface.
 8. **React + shadcn + Magic UI + Tremor** gives a Linear/Vercel-quality UI in a fraction of the time of building from scratch — all MIT-licensed, safe for a public repo, flat aesthetic that doesn't fight a data dashboard.
 9. **MongoDB MCP** lets Claude query state during development without writing glue code.

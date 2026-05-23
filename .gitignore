@@ -1,0 +1,104 @@
+# ===========================================================
+# Damm hackathon data — confidential, never commit
+# ===========================================================
+backend/app/data/raw/
+backend/app/data/snapshots/
+!backend/app/data/raw/.gitkeep
+!backend/app/data/snapshots/.gitkeep
+*.xlsx
+*.xls
+*.csv
+*.parquet
+*.feather
+
+# Allow OpenAPI generated artifacts
+!frontend/src/lib/api.gen.ts
+
+# ===========================================================
+# Python (backend)
+# ===========================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+.python-version
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# uv
+.uv/
+
+# Jupyter / marimo
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# MLflow / wandb
+mlruns/
+wandb/
+
+# ===========================================================
+# Node / frontend
+# ===========================================================
+node_modules/
+.next/
+.turbo/
+.vite/
+dist/
+build/
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+
+# pnpm / npm / yarn
+.pnpm-store/
+.npm/
+.yarn/
+
+# ===========================================================
+# Env / secrets
+# ===========================================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ===========================================================
+# OS / editors
+# ===========================================================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
