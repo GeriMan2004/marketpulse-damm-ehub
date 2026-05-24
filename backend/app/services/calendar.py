@@ -52,18 +52,43 @@ _HOLIDAY_META: dict[str, tuple[str, EventImportance]] = {
 
 
 # Hardcoded sport / cultural fixtures — anchored to the month they fall in.
-# Picked for likely beer impact in the UK. Importance scales with media reach:
-# - HIGH: World Cup / Euros finals & openings, Boxing Day football
-# - MEDIUM: Wimbledon (sustained over 2 weeks, broader audience)
-# - LOW: shoulder events
+# Picked for real UK beer-demand impact, not just media presence.
+# Importance scaling drives the simulator's promo-amplifier (1.10/1.25/1.50)
+# AND tags the chart's event-strip; the *post-forecast baseline boost* is
+# a separate concern, table-driven from POST_FORECAST_BOOST below.
+#
+# Curation principle: events that fall in months which the seasonality
+# multiplier (services/seasonality.py) ALREADY lifts (Aug for Summer BH,
+# Oct for Christmas-stocking, Dec for Christmas) get a moderate importance
+# so the simulator amplifies promos in those months, but their post-
+# forecast baseline boost is small / zero to avoid double-counting.
+# Events in months that seasonality DOESN'T cover (Nov sits between the
+# October stocking peak and December Christmas) get a more material boost.
 _SPORT_EVENTS: list[tuple[date, str, EventImportance]] = [
-    (date(2025, 6, 30),  "Wimbledon",            "medium"),
-    (date(2025, 12, 26), "Boxing Day football",  "high"),
-    (date(2026, 6, 11),  "World Cup opens",      "high"),
-    (date(2026, 6, 28),  "Wimbledon",            "medium"),
-    (date(2026, 7, 19),  "World Cup final",      "high"),
-    (date(2027, 6, 11),  "Euros opens",          "high"),
-    (date(2027, 7, 11),  "Euros final",          "high"),
+    (date(2025, 6, 30),  "Wimbledon",                "medium"),
+    (date(2025, 12, 26), "Boxing Day football",      "high"),
+
+    # ── 2026 horizon (production forecast window) ──────────────────────
+    (date(2026, 6, 11),  "World Cup opens",          "high"),
+    (date(2026, 6, 28),  "Wimbledon",                "medium"),
+    (date(2026, 7, 19),  "World Cup final",          "high"),
+    (date(2026, 8, 15),  "Premier League starts",    "medium"),  # mid-Aug pub season kickoff
+    (date(2026, 8, 24),  "Notting Hill Carnival",    "medium"),  # bank holiday weekend, big city event
+    (date(2026, 10, 31), "Halloween",                "medium"),  # off-trade party stock-up
+    (date(2026, 11, 5),  "Bonfire Night",            "high"),    # major UK boozy night
+    (date(2026, 11, 27), "Black Friday",             "low"),     # off-trade discount-driven stocking
+    (date(2026, 12, 26), "Boxing Day football",      "high"),
+
+    # ── 2027 horizon (rolls into view when training catches up) ────────
+    (date(2027, 6, 11),  "Euros opens",              "high"),
+    (date(2027, 6, 28),  "Wimbledon",                "medium"),
+    (date(2027, 7, 11),  "Euros final",              "high"),
+    (date(2027, 8, 14),  "Premier League starts",    "medium"),
+    (date(2027, 8, 30),  "Notting Hill Carnival",    "medium"),
+    (date(2027, 10, 31), "Halloween",                "medium"),
+    (date(2027, 11, 5),  "Bonfire Night",            "high"),
+    (date(2027, 11, 26), "Black Friday",             "low"),
+    (date(2027, 12, 26), "Boxing Day football",      "high"),
 ]
 
 
@@ -183,10 +208,32 @@ def event_boost_for_month(month_iso: str, events: list[CalendarEvent]) -> float:
 # pattern (e.g. "World Cup opens" and "World Cup final") get the same
 # boost without listing every variant.
 POST_FORECAST_BOOST: dict[str, float] = {
-    "World Cup":   0.20,  # demo-amplified above the measured +3-7% band
-    "Euros":       0.20,  # demo-amplified above the measured +3-7% band
-    "Wimbledon":   0.02,
-    "Easter Mon":  0.03,
+    # Major football tournaments — demo-amplified above the measured
+    # +3-7% band so the tournament month visibly stands out on the chart.
+    "World Cup":          0.20,
+    "Euros":              0.20,
+
+    # Sustained on-trade events — sport-pub demand on top of summer baseline.
+    "Wimbledon":          0.02,
+    "Premier League":     0.04,   # Aug season kickoff drives 4-6 weeks of pub trade
+
+    # Date-shifting bank holiday seasonality can't peg.
+    "Easter Mon":         0.03,
+
+    # November fills the gap between Oct stocking peak and Dec Christmas —
+    # seasonality multiplier is only ~1.20 there. These two together visibly
+    # raise November on the chart, matching the real beer-trade pattern.
+    "Bonfire Night":      0.08,   # major UK boozy night (fireworks parties + pub trade)
+    "Black Friday":       0.03,   # off-trade multipack stock-up — smaller, transactional
+
+    # August off-trade carnival weekend — Aug seasonality is modest (~1.0),
+    # so this lifts it visibly without overshooting reality.
+    "Notting Hill":       0.03,
+
+    # Halloween: October is ALREADY 1.79× via seasonality (Christmas stocking
+    # peak). A tiny boost recognises the off-trade party-night signal without
+    # double-counting the Q4 build.
+    "Halloween":          0.02,
 }
 
 
