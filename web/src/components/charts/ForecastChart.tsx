@@ -194,11 +194,23 @@ export function ForecastChart({
             }
           />
 
-          {/* Promo bands first so they paint *underneath* lines + band */}
+          {/* Promo bands first so they paint *underneath* lines + band.
+              When a single-week promo snaps to the same chart month at
+              both endpoints, Recharts paints a zero-width band (the
+              label still renders, but the green tint is invisible).
+              Extend x2 to the next chart period so the band has visible
+              width — slightly wider than the actual promo window but
+              the only way to keep the band readable on a category axis. */}
           {visiblePromos.map((w, i) => {
             const x1 = nearestVisiblePeriod(w.period_start, data, "start")
-            const x2 = nearestVisiblePeriod(w.period_end, data, "end")
+            let x2 = nearestVisiblePeriod(w.period_end, data, "end")
             if (!x1 || !x2) return null
+            if (x1 === x2) {
+              const idx = data.findIndex((d) => d.period === x1)
+              if (idx >= 0 && idx + 1 < data.length) {
+                x2 = data[idx + 1].period
+              }
+            }
             return (
               <ReferenceArea
                 key={`promo-${i}`}
