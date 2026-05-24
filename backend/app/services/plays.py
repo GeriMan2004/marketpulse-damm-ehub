@@ -70,6 +70,39 @@ def _human_period(period: str | None) -> str:
     return f"{m} '{y}"
 
 
+def _at_risk_months(sku: str, sub_channel: str) -> list[str]:
+    """Period labels ("Jul.26") for every month this SKU × sub_channel is
+    forecast below target. Sorted by gap severity (worst first) so the
+    simulator's first-action focus lands on the deepest miss.
+
+    Used by the "repeat what worked" and "close the gap" plays to span
+    the WHOLE SKU-level problem, not just one month. "Catch an event"
+    keeps its event-anchored window (different scope semantics).
+    """
+    fc_path = SNAPSHOTS / "forecast.parquet"
+    tg_path = SNAPSHOTS / "targets.parquet"
+    if not (fc_path.is_file() and tg_path.is_file()):
+        return []
+    fc = pl.read_parquet(fc_path).filter(
+        (pl.col("material_id") == sku) & (pl.col("sub_channel") == sub_channel)
+    )
+    tg = pl.read_parquet(tg_path).filter(
+        (pl.col("material_id") == sku) & (pl.col("sub_channel") == sub_channel)
+    )
+    if fc.height == 0 or tg.height == 0:
+        return []
+    joined = (
+        fc.join(tg, on=["material_id", "sub_channel", "date"], how="left")
+        .with_columns(
+            gap_hl=(pl.col("Hl_hat_p50") - pl.col("target_hl")),
+            period=pl.col("date").dt.strftime("%b.%y"),
+        )
+        .filter(pl.col("gap_hl") < 0)
+        .sort("gap_hl")  # most negative first
+    )
+    return [r["period"] for r in joined.iter_rows(named=True)]
+
+
 def _gap_context(sku: str, sub_channel: str, period: str | None) -> dict:
     """Pull forecast + target for the target period (or the worst at-risk
     month if no period given). Used for sizing the gap-closer play."""
@@ -152,13 +185,21 @@ def _play_repeat_what_worked(sku: str, sub_channel: str, target_period: str | No
         implied = 10.0
     discount = int(round(max(_DISCOUNT_FLOOR, min(_DISCOUNT_CAP, implied))))
 
-    # If no explicit period, default to the worst-gap month so the play
-    # arrives at the simulator pre-filled with something meaningful.
-    fallback_period = None
-    if not target_period:
+    # Span ALL at-risk months for this SKU. The "repeat" play is the
+    # tactical-but-broad choice — if this SKU is behind in Jul AND Oct
+    # AND Dec, you'd want the multi-buy in all three to address the
+    # whole picture, not just one month. Falls back to the explicit
+    # target_period (or the worst-gap month) if there are no at-risk
+    # months (rare — would mean the SKU is fully on plan).
+    at_risk = _at_risk_months(sku, sub_channel)
+    if at_risk:
+        months = at_risk
+    elif target_period:
+        months = [target_period]
+    else:
         ctx = _gap_context(sku, sub_channel, None)
         fallback_period = ctx.get("period") if ctx else None
-    months = [target_period] if target_period else ([fallback_period] if fallback_period else [])
+        months = [fallback_period] if fallback_period else []
     expected = max(0.0, min(1.2, lift_pct))
     return Play(
         kind="repeat",
@@ -236,20 +277,36 @@ def _play_catch_the_event(sku: str, sub_channel: str, target_period: str | None)
 
 
 def _play_close_the_gap(sku: str, sub_channel: str, target_period: str | None) -> Play | None:
-    """Size a promo discount to bring the gap to ~zero for the target month.
-    Uses the same saturating lift curve as the simulator."""
-    ctx = _gap_context(sku, sub_channel, target_period)
-    if not ctx:
-        return None
-    forecast = ctx["forecast_hl"]
-    target = ctx["target_hl"]
-    gap = ctx["gap_hl"]
-    if forecast <= 0 or target <= 0 or gap >= 0:
-        # Already on/above target — nothing to size.
-        return None
-    needed_lift_pct = abs(gap) / forecast  # fraction of baseline needed
-    # Inverse of the saturating curve (1 - exp(-d / 18)) ≈ lift_pct.
+    """Size one multi-buy discount that, applied across ALL at-risk
+    months for this SKU, closes the cumulative gap. Uses the same
+    saturating lift curve as the simulator."""
     import math
+
+    at_risk = _at_risk_months(sku, sub_channel)
+    if not at_risk:
+        return None
+
+    # Pull each at-risk month's forecast + target so we can size the
+    # discount against the SKU's TOTAL cumulative shortfall, not one
+    # month in isolation. This way the play really does close the
+    # SKU-wide problem when the user clicks it.
+    fc = pl.read_parquet(SNAPSHOTS / "forecast.parquet").filter(
+        (pl.col("material_id") == sku) & (pl.col("sub_channel") == sub_channel)
+    )
+    tg = pl.read_parquet(SNAPSHOTS / "targets.parquet").filter(
+        (pl.col("material_id") == sku) & (pl.col("sub_channel") == sub_channel)
+    )
+    joined = fc.join(tg, on=["material_id", "sub_channel", "date"], how="left").with_columns(
+        period=pl.col("date").dt.strftime("%b.%y"),
+        gap_hl=(pl.col("Hl_hat_p50") - pl.col("target_hl")),
+    ).filter(pl.col("period").is_in(at_risk))
+
+    total_forecast = float(joined["Hl_hat_p50"].sum())
+    total_gap = float(joined["gap_hl"].sum())  # negative
+    if total_forecast <= 0 or total_gap >= 0:
+        return None
+
+    needed_lift_pct = abs(total_gap) / total_forecast
     try:
         implied = -18.0 * math.log(max(1e-3, 1.0 - min(needed_lift_pct, 0.85)))
     except ValueError:
@@ -258,17 +315,18 @@ def _play_close_the_gap(sku: str, sub_channel: str, target_period: str | None) -
     saturated = min(needed_lift_pct, 1.0 - math.exp(-discount / 18.0))
     closed_pct = saturated / max(needed_lift_pct, 1e-3)
 
+    n_months = len(at_risk)
     title = f"Multi-buy at {discount}%"
     summary = (
-        f"Size a {discount}% multi-buy in {_human_period(ctx['period'])} "
-        f"to bring the forecast back to target."
+        f"Size a {discount}% multi-buy across the "
+        f"{n_months} at-risk month{'s' if n_months != 1 else ''} "
+        f"to close the cumulative gap."
     )
-    # Whether the discount fully closes the gap drives the why-line tone:
-    # "covers the shortfall" vs. "covers most of it" — honest either way.
     closes_most = closed_pct >= 0.95
     why = (
         f"~{saturated*100:.0f}% lift "
-        f"{'covers' if closes_most else 'covers most of'} the {abs(gap):.0f} hL shortfall"
+        f"{'covers' if closes_most else 'covers most of'} the {abs(total_gap):.0f} hL "
+        f"SKU-wide shortfall over {n_months} month{'s' if n_months != 1 else ''}"
     )
 
     return Play(
@@ -277,7 +335,7 @@ def _play_close_the_gap(sku: str, sub_channel: str, target_period: str | None) -
         summary=summary,
         why=why,
         why_source="Forecast vs target",
-        months=[ctx["period"]],
+        months=at_risk,
         action_type="promo",
         promo_type="multi-buy",
         discount_pct=float(discount),

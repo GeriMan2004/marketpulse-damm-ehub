@@ -403,6 +403,36 @@ def main() -> int:
     else:
         print("      seasonality: no series had enough history — skipped")
 
+    # ── Sanity cap vs historical max ────────────────────────────────────
+    # Lumpy channels (CONVENIENCE & WHOLESALE, NATIONAL ON TRADE) had
+    # SKUs where the LGB model output went 2-3× above the SKU's all-time
+    # historical monthly max — pushing the portfolio pulse to +37% YoY,
+    # which is unrealistic for a CPG (real range -3% to +15%). Cap each
+    # SKU × sub_channel forecast at 1.5× its trailing-12-month max so a
+    # genuine growth signal is preserved (50% headroom) but runaway
+    # forecasts get clipped.
+    monthly_for_cap = pl.read_parquet(WIDE)
+    per_series_max = (
+        monthly_for_cap
+        .sort("date").group_by(["material_id", "sub_channel"], maintain_order=True)
+        .agg(hist_max=pl.col("Hl").tail(12).max())
+    )
+    forecast = forecast.join(per_series_max, on=["material_id", "sub_channel"], how="left")
+    pre_cap_total = float(forecast["Hl_hat_p50"].sum())
+    forecast = forecast.with_columns(
+        cap=(pl.col("hist_max") * 1.5),
+    ).with_columns(
+        Hl_hat_p10=pl.min_horizontal("Hl_hat_p10", pl.col("cap")),
+        Hl_hat_p50=pl.min_horizontal("Hl_hat_p50", pl.col("cap")),
+        Hl_hat_p90=pl.min_horizontal("Hl_hat_p90", pl.col("cap") * 1.15),
+    ).drop(["hist_max", "cap"])
+    post_cap_total = float(forecast["Hl_hat_p50"].sum())
+    if pre_cap_total > post_cap_total:
+        print(
+            f"      sanity cap: clipped {pre_cap_total - post_cap_total:,.0f} hL "
+            f"({(1 - post_cap_total/pre_cap_total)*100:.1f}%) of overshoot"
+        )
+
     print(f"\n[4/4] persisting forecast.parquet + weights.json")
     forecast.write_parquet(SNAPSHOTS / "forecast.parquet")
     (MODELS / "weights.json").write_text(json.dumps(weights, indent=2))

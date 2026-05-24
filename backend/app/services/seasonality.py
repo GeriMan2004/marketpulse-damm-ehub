@@ -52,14 +52,16 @@ from typing import Literal
 
 import polars as pl
 
-# Per-SKU bounds — wider since we want to recover real SKU spikes that
-# the brand-pooled tier washes out (Christmas / summer peaks routinely
-# hit 1.8-2.2× the annual mean for individual SKUs).
-SKU_BOUNDS: tuple[float, float] = (0.40, 2.20)
+# Per-SKU bounds. Originally [0.40, 2.20] to recover SKU-specific peaks
+# the brand-pooled tier washed out — but the 2.20 ceiling was amplifying
+# noisy single-month peaks in low-history SKUs into +300-1000% YoY
+# swings that broke the portfolio-level pulse. Tightened to [0.55, 1.70]:
+# still wider than brand-pooled, still recovers genuine seasonal shape,
+# but caps the runaway-amplification failure mode.
+SKU_BOUNDS: tuple[float, float] = (0.55, 1.70)
 
-# Brand-pooled bounds — tighter since the pooled mean is smoother and
-# the upside should already be a measured cross-SKU average. Anything
-# beyond 1.8× at brand level is more likely outlier than signal.
+# Brand-pooled bounds — same as before. The pooled mean is already
+# smoothed by averaging across SKUs.
 BRAND_BOUNDS: tuple[float, float] = (0.55, 1.80)
 
 # Per-month minimum observations before we trust a brand-pooled series.
@@ -68,6 +70,17 @@ BRAND_BOUNDS: tuple[float, float] = (0.55, 1.80)
 # legitimately has n=1 per month after one year of history — the
 # 12-month-coverage requirement does the gatekeeping there.)
 BRAND_MIN_OBS_PER_MONTH: int = 3
+
+# Channels where per-SKU seasonality is unreliable enough that we'd
+# rather skip the granular tier and force the brand-pooled fallback.
+# Convenience & wholesale has lumpy, irregular ordering — cash-and-carry
+# wholesalers reorder quarterly, not monthly — so a single big month in
+# a SKU's history would set the per-SKU multiplier near the ceiling and
+# project +400-1000% YoY swings. Brand-pooled smooths across SKUs and
+# is much more honest for this channel.
+SKIP_PER_SKU_CHANNELS: frozenset[str] = frozenset({
+    "CONVENIENCE & WHOLESALE",
+})
 
 # Tier marker — appended to keys so callers can introspect which tier
 # resolved a given (sku, channel) — useful for debugging the chart's
@@ -96,9 +109,10 @@ def compute_seasonality_multipliers(
     df = monthly.with_columns(month=pl.col("date").dt.month())
     out: dict[MultiplierKey, float] = {}
 
-    # ── Tier 1: per-SKU ─────────────────────────────────────────────────
+    # ── Tier 1: per-SKU (skip the lumpy channels) ───────────────────────
     by_sku = (
-        df.group_by(["material_id", "sub_channel", "month"])
+        df.filter(~pl.col("sub_channel").is_in(list(SKIP_PER_SKU_CHANNELS)))
+        .group_by(["material_id", "sub_channel", "month"])
         .agg(mean_hl=pl.col("Hl").mean(), n=pl.len())
     )
     for (sku, sub), grp in by_sku.group_by(["material_id", "sub_channel"]):
