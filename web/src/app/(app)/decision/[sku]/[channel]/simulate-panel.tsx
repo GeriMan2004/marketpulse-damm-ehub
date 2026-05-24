@@ -278,7 +278,15 @@ export function SimulatePanel({
         coverageLine = ` Action lifts the line but no month yet clears target — try a deeper discount or stack a brand push.`
       }
     }
-    return `Running ${what} in ${monthsText} lifts volume by ${liftPct}% on top of the baseline forecast.${eventLine}${coverageLine}`
+    // Surface the underlying £ economics so the headline ROI isn't a
+    // black box — finance-readable break-down: discount cost (the cash
+    // give-away) and lift £ (incremental revenue), which together net
+    // to the headline figure.
+    let economicsLine = ""
+    if (result.estimated_cost != null && result.lift_gbp != null) {
+      economicsLine = ` £ math: ${formatGBP(result.lift_gbp)} extra revenue − ${formatGBP(result.estimated_cost)} discount give-away.`
+    }
+    return `Running ${what} in ${monthsText} lifts volume by ${liftPct}% on top of the baseline forecast.${eventLine}${coverageLine}${economicsLine}`
   })()
 
   // Two layouts:
@@ -385,8 +393,19 @@ export function SimulatePanel({
               }
             />
             <KpiInline
-              label="Discount cost"
-              value={result?.estimated_cost ? formatGBP(result.estimated_cost) : "—"}
+              label="Net £ impact"
+              value={
+                result?.net_gbp != null
+                  ? `${result.net_gbp >= 0 ? "+" : ""}${formatGBP(result.net_gbp)}`
+                  : "—"
+              }
+              tone={
+                result?.net_gbp == null
+                  ? "neutral"
+                  : result.net_gbp >= 0
+                    ? "positive"
+                    : "negative"
+              }
             />
           </dl>
 

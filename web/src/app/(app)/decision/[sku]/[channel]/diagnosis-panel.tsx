@@ -25,6 +25,7 @@ type ForecastPoint = components["schemas"]["ForecastPoint"]
 type Driver = components["schemas"]["Driver"]
 type ExplainView = components["schemas"]["ExplainViewSummary"]
 type ExternalSignalsTimelineT = components["schemas"]["ExternalSignalsTimeline"]
+type PeriodSignals = components["schemas"]["PeriodSignals"]
 type GapItem = components["schemas"]["GapItem"]
 type PlaysResponse = components["schemas"]["PlaysResponse"]
 type Play = components["schemas"]["Play"]
@@ -207,16 +208,23 @@ export async function DiagnosisPanel({
         )}
       </section>
 
-      {/* Supporting context row — Recent performance, Planned promos, Top
-          drivers. Three equal-height columns (cards stretch to the tallest
-          in the row); if any one is missing, the others widen to fit. */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
+      {/* Supporting context row — Recent performance, Planned promos,
+          External context, Why this forecast. Four equal-height columns
+          on wide screens, 2×2 on medium, stacked on mobile. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch">
         {currentGap && currentGap.history_hl && currentGap.history_hl.length > 0 && (
           <RecentPerformanceCard history={currentGap.history_hl} />
         )}
 
         <PromosInPeriodCard
           windows={forecast.promo_windows ?? []}
+          targetPeriod={targetPeriod}
+        />
+
+        <ExternalContextCard
+          signals={
+            signalsTimeline?.months.find((m) => m.period === targetPeriod) ?? null
+          }
           targetPeriod={targetPeriod}
         />
 
@@ -610,6 +618,143 @@ function monthFromPeriod(period: string): { year: number; month: number } | null
  *            construction, summing the weekly targets within a month
  *            equals the monthly target.
  */
+/**
+ * External context card — surfaces the external data feeds the forecast
+ * was informed by for THIS month. Previously only visible via tooltip
+ * hover on the chart, which a Commercial Manager glancing at the page
+ * would never discover. The data sources, line by line:
+ *
+ *   · Weather:     NASA POWER reanalysis daily series → monthly mean
+ *                  + anomaly vs 30-year climatology for the UK.
+ *   · Search:      Google Trends via pytrends — interest scores for
+ *                  Estrella / lager / beer over the rolling 90-day
+ *                  window, plus a 3-month trend direction.
+ *   · UK retail:   ONS (Office for National Statistics) retail sales
+ *                  index — food & drink subset. Trend over recent
+ *                  months. Government-published, ~5-week lag.
+ *   · Events:      Curated UK calendar — bank holidays (from the
+ *                  `holidays` package) plus hand-picked sport /
+ *                  cultural fixtures we know move beer demand
+ *                  (World Cup, Wimbledon, Bonfire Night, etc.).
+ *
+ * See [services/external.py](backend/app/services/external.py) for the
+ * fetch + cache logic and DATA.md for source documentation.
+ */
+function ExternalContextCard({
+  signals,
+  targetPeriod,
+}: {
+  signals: PeriodSignals | null
+  targetPeriod: string | undefined
+}) {
+  const lines: { icon: string; label: string; value: string; tone?: "good" | "bad" | "neutral" }[] = []
+  if (signals) {
+    // Weather
+    if (signals.weather.temp_c != null) {
+      const t = signals.weather.temp_c.toFixed(1)
+      const a = signals.weather.anomaly_c
+      const anom =
+        a != null && Math.abs(a) >= 0.5
+          ? ` (${a > 0 ? "+" : ""}${a.toFixed(1)}° vs avg)`
+          : ""
+      const tone: "good" | "bad" | "neutral" =
+        a == null || Math.abs(a) < 0.5
+          ? "neutral"
+          : a > 0
+            ? "good"   // warmer than usual is good for beer
+            : "bad"
+      lines.push({
+        icon: a != null && a < 0 ? "❄" : "🌡",
+        label: "Weather",
+        value: `${t}°C${anom}`,
+        tone,
+      })
+    }
+    // Search trends
+    if (signals.search.estrella != null || signals.search.beer != null) {
+      const trend = signals.search.estrella_trend ?? "flat"
+      const arrow = trend === "up" ? "↑" : trend === "down" ? "↓" : "→"
+      const scoreParts: string[] = []
+      if (signals.search.estrella != null) {
+        scoreParts.push(`Estrella ${signals.search.estrella.toFixed(0)}`)
+      }
+      if (signals.search.beer != null) {
+        scoreParts.push(`beer ${signals.search.beer.toFixed(0)}`)
+      }
+      lines.push({
+        icon: "🔎",
+        label: "Search",
+        value: `${scoreParts.join(" · ")} ${arrow}`,
+        tone: trend === "up" ? "good" : trend === "down" ? "bad" : "neutral",
+      })
+    }
+    // ONS retail
+    if (signals.retail.food_drink_index != null) {
+      const trend = signals.retail.food_drink_trend ?? "flat"
+      const arrow = trend === "up" ? "↑" : trend === "down" ? "↓" : "→"
+      lines.push({
+        icon: "🛒",
+        label: "ONS food & drink",
+        value: `${signals.retail.food_drink_index.toFixed(0)} ${arrow}`,
+        tone: trend === "up" ? "good" : trend === "down" ? "bad" : "neutral",
+      })
+    }
+    // Events
+    if (signals.events.length > 0) {
+      lines.push({
+        icon: "📅",
+        label: "Events",
+        value: signals.events.map((e) => e.label).join(" · "),
+        tone: "neutral",
+      })
+    }
+  }
+  return (
+    <section className="h-full rounded-2xl border border-neutral-200 bg-white">
+      <header className="px-4 pt-3 pb-2">
+        <h3 className="text-[13px] font-semibold text-neutral-900">
+          External context
+        </h3>
+        <p className="text-[12px] text-neutral-500 mt-0.5">
+          Signals informing the forecast
+          {targetPeriod ? ` for ${humanPeriod(targetPeriod)}` : ""}.
+        </p>
+      </header>
+      <div className="px-4 pb-3">
+        {lines.length === 0 ? (
+          <p className="text-[12px] text-neutral-500">
+            No external signals for this period.
+          </p>
+        ) : (
+          <ul className="space-y-1.5">
+            {lines.map((l, i) => (
+              <li key={i} className="flex items-baseline gap-2 text-[12px]">
+                <span aria-hidden className="w-4 text-center text-[11px]">
+                  {l.icon}
+                </span>
+                <span className="text-neutral-500 shrink-0 min-w-[68px]">{l.label}</span>
+                <span
+                  className={`truncate ${
+                    l.tone === "good"
+                      ? "text-[var(--positive)]"
+                      : l.tone === "bad"
+                        ? "text-[var(--negative)]"
+                        : "text-neutral-700"
+                  }`}
+                  title={l.value}
+                >
+                  {l.value}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  )
+}
+
+
 function buildTargetByPeriod(
   points: ForecastPoint[],
   targets: Array<{ period: string; period_start: string; target_hl: number }>,
