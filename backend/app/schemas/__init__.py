@@ -17,7 +17,13 @@ from .forecast import CalendarEvent, ForecastPoint, ForecastSeries, PromoWindow
 from .gap import GapItem, KpiSummary
 from .meta import MetaResponse
 from .pricing import GrossPriceRate
-from .promos import PromoROI
+from .promos import (
+    PromoAffectedProduct,
+    PromoBudgetFlow,
+    PromoBudgetFlowItem,
+    PromoBudgetPreview,
+    PromoROI,
+)
 from .recommend import RecommendationAction, RecommendationResponse, RecommendationScenario
 from .simulate import SimulationRequest, SimulationResult
 
@@ -40,6 +46,10 @@ __all__ = [
     "KpiSummary",
     "GrossPriceRate",
     "MetaResponse",
+    "PromoAffectedProduct",
+    "PromoBudgetFlow",
+    "PromoBudgetFlowItem",
+    "PromoBudgetPreview",
     "PromoROI",
     "Pulse",
     "RecommendationAction",
