@@ -22,11 +22,14 @@ import {
 } from "recharts"
 import type { TooltipProps } from "recharts"
 import { formatHl, formatPeriod, formatPeriodShort } from "@/lib/format"
+import { driverLabel } from "@/lib/driver-labels"
 import type { components } from "@/lib/api.gen"
 
 type ForecastPoint = components["schemas"]["ForecastPoint"]
 type PromoWindow = components["schemas"]["PromoWindow"]
 type CalendarEvent = components["schemas"]["CalendarEvent"]
+type Driver = components["schemas"]["Driver"]
+type PeriodSignals = components["schemas"]["PeriodSignals"]
 
 type ChartDatum = {
   period: string                       // X-axis label, e.g. "May '26"
@@ -43,11 +46,27 @@ export function ForecastChart({
   targetByPeriod,
   promoWindows,
   events,
+  drivers,
+  signalsTimeline,
 }: {
   points: ForecastPoint[]
   targetByPeriod?: Record<string, number>
   promoWindows?: PromoWindow[]
   events?: CalendarEvent[]
+  /**
+   * Optional SHAP drivers for this SKU × sub_channel. Surfaced in the
+   * tooltip so the user sees what the model leaned on without leaving
+   * the chart. Same drivers across every point (drivers are SKU-level,
+   * not period-level — see backend/app/routers/drivers.py).
+   */
+  drivers?: Driver[]
+  /**
+   * Per-month external context (weather, search, retail, events). When
+   * supplied, the chart renders a labelled event-chip strip above the
+   * line and the tooltip surfaces the active state (e.g. "+2.1° vs avg")
+   * for the hovered period.
+   */
+  signalsTimeline?: PeriodSignals[]
 }) {
   const data: ChartDatum[] = points.map((p) => ({
     period: formatPeriodShort(p.period),
@@ -90,8 +109,47 @@ export function ForecastChart({
     eventsByPeriod.set(short, arr)
   }
 
+  // Per-period signals (weather/search/retail/events). Keyed by the chart's
+  // short period label so the tooltip can look up by hover label.
+  const signalsByPeriod = new Map<string, PeriodSignals>()
+  for (const s of signalsTimeline ?? []) {
+    const short = isoToShort.get(s.period_start)
+    if (short) signalsByPeriod.set(short, s)
+  }
+
+  // Pre-compute the events strip rendered above the chart — one chip per
+  // visible event-bearing month, ordered chronologically. Shows the user at
+  // a glance which months are touched by holidays / sport fixtures.
+  const eventStrip = data
+    .map((d) => ({
+      period: d.period,
+      events: eventsByPeriod.get(d.period) ?? [],
+    }))
+    .filter((row) => row.events.length > 0)
+
   return (
-    <div className="w-full h-[280px]">
+    <div className="w-full">
+      {/* Events strip — labelled chips per affected month, scannable in one
+          glance. Replaces the previous dashed-line-only annotation. The
+          dashed reference lines still appear inside the chart for visual
+          continuity, but they're now bound to a label up here. */}
+      {eventStrip.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {eventStrip.map((row) => (
+            <span
+              key={row.period}
+              className="inline-flex items-center gap-1.5 rounded-full bg-neutral-100 px-2 py-0.5 text-[10.5px] text-neutral-700"
+              title={row.events.map((e) => `${e.label} (${row.period})`).join(" · ")}
+            >
+              <span className="text-neutral-400 tabular-nums">{row.period}</span>
+              <span className="font-medium">
+                {row.events.map((e) => e.label).join(" · ")}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="w-full h-[220px]">
       <ResponsiveContainer>
         <ComposedChart data={data} margin={{ top: 16, right: 12, bottom: 0, left: 8 }}>
           <CartesianGrid strokeDasharray="2 4" stroke="var(--border)" vertical={false} />
@@ -108,6 +166,8 @@ export function ForecastChart({
               <ForecastTooltip
                 promoByPeriod={promoByPeriod}
                 eventsByPeriod={eventsByPeriod}
+                drivers={drivers ?? []}
+                signalsByPeriod={signalsByPeriod}
               />
             }
           />
@@ -176,6 +236,7 @@ export function ForecastChart({
           <ReferenceLine y={0} stroke="var(--border)" />
         </ComposedChart>
       </ResponsiveContainer>
+      </div>
     </div>
   )
 }
@@ -191,10 +252,12 @@ type ForecastTooltipProps = TooltipProps<number, string> & {
   label?: string
   promoByPeriod: Map<string, PromoWindow>
   eventsByPeriod: Map<string, CalendarEvent[]>
+  drivers: Driver[]
+  signalsByPeriod: Map<string, PeriodSignals>
 }
 
 function ForecastTooltip({
-  active, payload, label, promoByPeriod, eventsByPeriod,
+  active, payload, label, promoByPeriod, eventsByPeriod, drivers, signalsByPeriod,
 }: ForecastTooltipProps) {
   if (!active || !payload?.length) return null
   // recharts may stack multiple payload entries (band, point, target) — first
@@ -207,44 +270,148 @@ function ForecastTooltip({
   const gapPct = target ? (forecast - target) / target : null
   const promo = promoByPeriod.get(String(label))
   const events = eventsByPeriod.get(String(label)) ?? []
+  // Band width as ±% of the point — helps the user trust or distrust the
+  // figure (tight = model is sure; wide = hedge).
+  const bandRel = forecast > 0 ? (datum.hi80 - datum.lo80) / (2 * forecast) : 0
+  const topDrivers = drivers.slice(0, 2)
+  const signals = signalsByPeriod.get(String(label))
+
+  // Build per-period external context lines. Only notable ones — skip
+  // when the signal is "normal" so we don't fill the tooltip with noise.
+  const externalLines: { icon: string; text: string; tone?: "good" | "bad" | "neutral" }[] = []
+  if (signals) {
+    const a = signals.weather.anomaly_c
+    if (a != null && Math.abs(a) >= 0.5) {
+      externalLines.push({
+        icon: a > 0 ? "🌡" : "❄",
+        text: `${a > 0 ? "+" : ""}${a.toFixed(1)}° vs avg`,
+        tone: a > 0 ? "good" : "bad",
+      })
+    }
+    if (signals.search.estrella_trend && signals.search.estrella_trend !== "flat") {
+      externalLines.push({
+        icon: "🔎",
+        text: `Estrella search ${signals.search.estrella_trend}`,
+        tone: signals.search.estrella_trend === "up" ? "good" : "bad",
+      })
+    }
+    if (signals.retail.food_drink_trend && signals.retail.food_drink_trend !== "flat") {
+      externalLines.push({
+        icon: "🛒",
+        text: `UK food & drink ${signals.retail.food_drink_trend}`,
+        tone: signals.retail.food_drink_trend === "up" ? "good" : "bad",
+      })
+    }
+  }
 
   return (
-    <div className="bg-white border border-neutral-200 rounded-md shadow-sm px-3 py-2 text-[12px]">
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium mb-1">
+    <div className="bg-white border border-neutral-200 rounded-lg shadow-md px-3 py-2.5 text-[12px] min-w-[220px]">
+      <div className="text-[11px] uppercase tracking-wide text-neutral-500 font-medium mb-1.5">
         {formatPeriod(datum.periodIso.slice(0, 7))}
       </div>
-      <div className="flex items-center justify-between gap-6 tabular-nums">
-        <span className="text-neutral-500">Forecast</span>
-        <span className="font-medium text-neutral-900">{formatHl(forecast)}</span>
+      <div className="space-y-0.5">
+        <div className="flex items-center justify-between gap-6 tabular-nums">
+          <span className="text-neutral-500">Forecast</span>
+          <span className="font-semibold text-neutral-900">{formatHl(forecast)}</span>
+        </div>
+        {target != null && (
+          <div className="flex items-center justify-between gap-6 tabular-nums">
+            <span className="text-neutral-500">Target</span>
+            <span className="text-neutral-700">{formatHl(target)}</span>
+          </div>
+        )}
+        {gapPct != null && (
+          <div className="flex items-center justify-between gap-6 tabular-nums">
+            <span className="text-neutral-500">Gap</span>
+            <span
+              className={
+                gapPct >= 0.02 ? "font-semibold text-positive"
+                : gapPct <= -0.02 ? "font-semibold text-negative"
+                : "font-semibold text-neutral-900"
+              }
+            >
+              {`${gapPct > 0 ? "+" : ""}${(gapPct * 100).toFixed(1)}%`}
+            </span>
+          </div>
+        )}
+        {bandRel > 0 && (
+          <div className="flex items-center justify-between gap-6 tabular-nums">
+            <span className="text-neutral-500">Band</span>
+            <span className="text-neutral-500">±{(bandRel * 100).toFixed(0)}%</span>
+          </div>
+        )}
       </div>
-      {target != null && (
-        <div className="flex items-center justify-between gap-6 tabular-nums">
-          <span className="text-neutral-500">Target</span>
-          <span className="font-medium text-neutral-900">{formatHl(target)}</span>
+
+      {/* Drivers — what the model leaned on for this SKU. SKU-level, not
+          period-level, so the same set shows for every point. Still useful
+          context inline with the number. */}
+      {topDrivers.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-neutral-100">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-neutral-400 font-medium mb-1">
+            What drives it
+          </div>
+          <ul className="space-y-0.5">
+            {topDrivers.map((d, i) => {
+              const isUp = d.direction === "positive"
+              return (
+                <li key={i} className="flex items-center justify-between gap-3 tabular-nums">
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <span
+                      className={
+                        isUp ? "text-[var(--positive)]" : "text-[var(--negative)]"
+                      }
+                      aria-hidden
+                    >
+                      {isUp ? "↑" : "↓"}
+                    </span>
+                    <span className="text-neutral-700 truncate text-[11.5px]">
+                      {driverLabel(d.feature)}
+                    </span>
+                  </span>
+                  <span
+                    className={`text-[11px] shrink-0 ${
+                      isUp ? "text-[var(--positive)]" : "text-[var(--negative)]"
+                    }`}
+                  >
+                    {isUp ? "+" : "−"}{formatHl(Math.abs(d.shap_value))}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
         </div>
       )}
-      {gapPct != null && (
-        <div className="flex items-center justify-between gap-6 tabular-nums">
-          <span className="text-neutral-500">Gap</span>
-          <span
-            className={
-              gapPct >= 0.02 ? "font-medium text-positive"
-              : gapPct <= -0.02 ? "font-medium text-negative"
-              : "font-medium text-neutral-900"
-            }
-          >
-            {`${gapPct > 0 ? "+" : ""}${(gapPct * 100).toFixed(1)}%`}
-          </span>
-        </div>
-      )}
-      {promo && (
-        <div className="mt-1.5 pt-1.5 border-t border-neutral-100 text-positive tabular-nums">
-          Promo: {promo.label}
-        </div>
-      )}
-      {events.length > 0 && (
-        <div className="mt-1.5 pt-1.5 border-t border-neutral-100 text-neutral-600">
-          {events.map((e) => e.label).join(" · ")}
+
+      {/* Period-specific context — promo / event / external state for THIS
+          hovered point. Lets the user see *why* this month spikes or dips
+          without leaving the chart. */}
+      {(promo || events.length > 0 || externalLines.length > 0) && (
+        <div className="mt-2 pt-2 border-t border-neutral-100 space-y-1">
+          {promo && (
+            <div className="text-[11.5px] text-[color:var(--positive)]">
+              Promo: {promo.label}
+            </div>
+          )}
+          {events.length > 0 && (
+            <div className="text-[11.5px] text-neutral-700">
+              {events.map((e) => e.label).join(" · ")}
+            </div>
+          )}
+          {externalLines.map((l, i) => (
+            <div
+              key={i}
+              className={`text-[11.5px] ${
+                l.tone === "good"
+                  ? "text-[color:var(--positive)]"
+                  : l.tone === "bad"
+                    ? "text-[color:var(--negative)]"
+                    : "text-neutral-600"
+              }`}
+            >
+              <span className="mr-1.5" aria-hidden>{l.icon}</span>
+              {l.text}
+            </div>
+          ))}
         </div>
       )}
     </div>

@@ -24,7 +24,14 @@ from pathlib import Path
 import polars as pl
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas import ExternalSignals, RetailSignal, SearchSignal, WeatherSignal
+from app.schemas import (
+    ExternalSignals,
+    ExternalSignalsTimeline,
+    PeriodSignals,
+    RetailSignal,
+    SearchSignal,
+    WeatherSignal,
+)
 from app.services.calendar import build_events
 
 router = APIRouter(prefix="/api", tags=["external"])
@@ -175,3 +182,95 @@ def external_signals(
         retail=retail,
         events=events,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /api/external-signals/timeline — per-month signals across a horizon
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _month_starts(start: date_t, end: date_t) -> list[date_t]:
+    """Yield first-of-month dates from `start` (inclusive) to `end` (inclusive)."""
+    out: list[date_t] = []
+    cur = date_t(start.year, start.month, 1)
+    last = date_t(end.year, end.month, 1)
+    while cur <= last:
+        out.append(cur)
+        if cur.month == 12:
+            cur = date_t(cur.year + 1, 1, 1)
+        else:
+            cur = date_t(cur.year, cur.month + 1, 1)
+    return out
+
+
+@router.get("/external-signals/timeline", response_model=ExternalSignalsTimeline)
+def external_signals_timeline(
+    sku: str = Query(...),
+    sub_channel: str = Query(...),
+    period_from: str | None = Query(default=None, alias="from"),
+    period_to: str | None = Query(default=None, alias="to"),
+):
+    """Per-month external signals for the chart's storytelling layer.
+
+    Used by the forecast chart's tooltip and signal-track strip so the
+    user can see *which months* are touched by an event, a heatwave, or
+    a search-trend spike — at a glance, without leaving the chart.
+    """
+    wide = _wide()
+    available = sorted(wide["date"].unique().to_list())
+    if not available:
+        return ExternalSignalsTimeline(sku=sku, sub_channel=sub_channel, months=[])
+
+    start = _parse_period(period_from) or available[0]
+    end = _parse_period(period_to) or date_t(start.year + 1, start.month, 1)
+
+    months: list[PeriodSignals] = []
+    for m in _month_starts(start, end):
+        resolved, source = _resolve_period(wide, m)
+        rows = wide.filter(pl.col("date") == resolved).head(1)
+        if len(rows) == 0:
+            continue
+        row = rows.row(0, named=True)
+
+        # Build prior-month lookup for trend deltas — same shape as the
+        # per-period endpoint above.
+        prev_date = resolved.replace(day=1) - timedelta(days=1)
+        prev_date = prev_date.replace(day=1)
+        prev_rows = wide.filter(pl.col("date") == prev_date).head(1)
+        prev = prev_rows.row(0, named=True) if len(prev_rows) else {}
+
+        def num(r: dict, key: str) -> float | None:
+            v = r.get(key)
+            return float(v) if v is not None else None
+
+        # Events for the *actual* month asked about (not the proxy source).
+        m_start = m
+        if m_start.month == 12:
+            m_end = date_t(m_start.year + 1, 1, 1) - timedelta(days=1)
+        else:
+            m_end = date_t(m_start.year, m_start.month + 1, 1) - timedelta(days=1)
+        events = build_events(m_start, m_end)
+
+        months.append(PeriodSignals(
+            period=m.strftime("%b.%y"),
+            period_start=m.isoformat(),
+            source=source,  # type: ignore[arg-type]
+            weather=WeatherSignal(
+                temp_c=num(row, "temp_c_mean"),
+                anomaly_c=num(row, "temp_c_anomaly"),
+            ),
+            search=SearchSignal(
+                estrella=num(row, "trends_estrella"),
+                lager=num(row, "trends_lager"),
+                beer=num(row, "trends_beer"),
+                estrella_trend=_trend(num(row, "trends_estrella"), num(prev, "trends_estrella")),  # type: ignore[arg-type]
+            ),
+            retail=RetailSignal(
+                retail_index=num(row, "ons_retail_index"),
+                food_drink_index=num(row, "ons_food_drink_index"),
+                food_drink_trend=_trend(num(row, "ons_food_drink_index"), num(prev, "ons_food_drink_index")),  # type: ignore[arg-type]
+            ),
+            events=events,
+        ))
+
+    return ExternalSignalsTimeline(sku=sku, sub_channel=sub_channel, months=months)

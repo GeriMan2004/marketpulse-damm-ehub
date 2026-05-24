@@ -38,3 +38,26 @@ class ExternalSignals(BaseModel):
     search: SearchSignal
     retail: RetailSignal
     events: list[CalendarEvent]
+
+
+class PeriodSignals(BaseModel):
+    """Per-month signals across a horizon, used to drive the chart's
+    hover-tooltip storytelling: weather state, search trend, events.
+    """
+
+    period: str                        # "Dec.26"
+    period_start: str                  # ISO date (month start)
+    source: Literal["actuals", "prior_year"]
+    weather: WeatherSignal
+    search: SearchSignal
+    retail: RetailSignal
+    events: list[CalendarEvent]
+
+
+class ExternalSignalsTimeline(BaseModel):
+    """Bundle of per-month signals across the forecast window. Returned
+    by /api/external-signals/timeline."""
+
+    sku: str
+    sub_channel: str
+    months: list[PeriodSignals]

@@ -5,7 +5,14 @@ from .anomaly import AnomalyEvent
 from .chat import ChatMessage, ChatRequest
 from .drivers import Driver
 from .explain import ExplainViewRequest, ExplainViewSummary
-from .external import ExternalSignals, RetailSignal, SearchSignal, WeatherSignal
+from .external import (
+    ExternalSignals,
+    ExternalSignalsTimeline,
+    PeriodSignals,
+    RetailSignal,
+    SearchSignal,
+    WeatherSignal,
+)
 from .forecast import CalendarEvent, ForecastPoint, ForecastSeries, PromoWindow
 from .gap import GapItem, KpiSummary
 from .meta import MetaResponse
@@ -24,6 +31,8 @@ __all__ = [
     "ExplainViewRequest",
     "ExplainViewSummary",
     "ExternalSignals",
+    "ExternalSignalsTimeline",
+    "PeriodSignals",
     "ForecastPoint",
     "ForecastSeries",
     "PromoWindow",

@@ -15,7 +15,7 @@ import Link from "next/link"
 import { ArrowRight } from "lucide-react"
 import { ForecastChart } from "@/components/charts/ForecastChart"
 import { serverFetch } from "@/lib/api"
-import { driverLabel } from "@/lib/driver-labels"
+import { driverHint, driverLabel } from "@/lib/driver-labels"
 import { confidenceLabel, formatHl, formatPercent } from "@/lib/format"
 import type { components } from "@/lib/api.gen"
 import { GranularityToggle } from "./granularity-toggle"
@@ -25,6 +25,7 @@ type ForecastPoint = components["schemas"]["ForecastPoint"]
 type Driver = components["schemas"]["Driver"]
 type ExplainView = components["schemas"]["ExplainViewSummary"]
 type ExternalSignalsT = components["schemas"]["ExternalSignals"]
+type ExternalSignalsTimelineT = components["schemas"]["ExternalSignalsTimeline"]
 type GapItem = components["schemas"]["GapItem"]
 type RecResponse = components["schemas"]["RecommendationResponse"]
 type RecScenario = components["schemas"]["RecommendationScenario"]
@@ -68,7 +69,7 @@ export async function DiagnosisPanel({
   const baseQ = `?sku=${encodeURIComponent(sku)}&sub_channel=${encodeURIComponent(sub_channel)}`
   const fcQ = `${baseQ}&granularity=${granularity}`
 
-  const [forecast, drivers, rec, signals] = await Promise.all([
+  const [forecast, drivers, rec, signals, signalsTimeline] = await Promise.all([
     serverFetch<ForecastSeries>(`/api/forecast${fcQ}`),
     serverFetch<Driver[]>(`/api/drivers${baseQ}`),
     targetPeriod
@@ -83,6 +84,10 @@ export async function DiagnosisPanel({
           `/api/external-signals${baseQ}&period=${encodeURIComponent(targetPeriod)}`,
         ).catch(() => null)
       : Promise.resolve(null),
+    // Per-month signals across the chart window — drives the event-chip
+    // strip above the chart and the per-period state in the tooltip.
+    serverFetch<ExternalSignalsTimelineT>(`/api/external-signals/timeline${baseQ}`)
+      .catch(() => null),
   ])
 
   // Monthly: ±4 months around target. Weekly: ~12 weeks centred on target.
@@ -135,7 +140,7 @@ export async function DiagnosisPanel({
     : []
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3">
       {/* Narrative — quiet headline above the chart. Hidden on LLM fallback. */}
       {narrative && (
         <section>
@@ -145,106 +150,104 @@ export async function DiagnosisPanel({
         </section>
       )}
 
-      {/* Chart + drivers. The KPI strip is gone — Forecast/Target are the
-          two lines on the chart literally below, and Gap is now in the
-          page header next to the SKU title.
-          `items-start` so the chart card takes its natural height instead
-          of stretching to match the taller right column. */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-        <section className="lg:col-span-2 rounded-2xl border border-neutral-200 bg-white">
-          <header className="flex items-center justify-between gap-3 px-5 pt-4 pb-2">
-            <h3 className="text-[13px] font-semibold text-neutral-900">Forecast vs target</h3>
-            <div className="flex items-center gap-2 shrink-0">
-              {currentGap && (
-                <span
-                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-wide ${
-                    CONFIDENCE_CHIP[currentGap.confidence]
-                  }`}
-                >
-                  {confidenceLabel(currentGap.confidence)}
-                </span>
-              )}
-              <GranularityToggle value={granularity} />
-            </div>
-          </header>
-          <div className="px-3 pb-3 pt-1">
-            <ForecastChart
-              points={focused}
-              promoWindows={forecast.promo_windows ?? []}
-              events={forecast.events ?? []}
-            />
+      {/* Chart — full width. No sidebar, no stretched columns, no empty
+          pockets. Pattern lifted from Stripe / Vercel Analytics: hero chart
+          spans the page, supporting cards live in their own row below. */}
+      <section className="rounded-2xl border border-neutral-200 bg-white">
+        <header className="flex items-center justify-between gap-3 px-5 pt-4 pb-2">
+          <h3 className="text-[13px] font-semibold text-neutral-900">Forecast vs target</h3>
+          <div className="flex items-center gap-2 shrink-0">
+            {currentGap && (
+              <span
+                className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-wide ${
+                  CONFIDENCE_CHIP[currentGap.confidence]
+                }`}
+              >
+                {confidenceLabel(currentGap.confidence)}
+              </span>
+            )}
+            <GranularityToggle value={granularity} />
           </div>
-          {/* Compact context line — replaces the multi-row "External context"
-              card. One sentence with the most decision-relevant signals. */}
-          <ExternalContextLine signals={signals} />
-          {narrative && narrative.bullets?.length > 0 && (
-            <div className="border-t border-neutral-200 px-5 py-3 text-[12.5px] text-neutral-600">
-              {narrative.bullets[0]}
-            </div>
-          )}
-        </section>
-
-        <div className="flex flex-col gap-4">
-          {/* Recent performance — uses the trailing gap_hl history we
-              already have on every GapItem. Reads as "missed 4 of last 6"
-              at a glance, much more concrete than SHAP attributions. */}
-          {currentGap && currentGap.history_hl && currentGap.history_hl.length > 0 && (
-            <RecentPerformanceCard history={currentGap.history_hl} />
-          )}
-
-          {/* Promos in this period — pulled from the same forecast call
-              that drives the chart. Tells the user what trade activity is
-              already planned around the target month. */}
-          {forecast.promo_windows && forecast.promo_windows.length > 0 && (
-            <PromosInPeriodCard
-              windows={forecast.promo_windows}
-              targetPeriod={targetPeriod}
-            />
-          )}
-
-          {/* Top drivers — kept as supporting context. Compact, doesn't
-              dominate the right column anymore. */}
-          <section className="rounded-2xl border border-neutral-200 bg-white">
-            <header className="px-5 pt-4 pb-2">
-              <h3 className="text-[13px] font-semibold text-neutral-900">Top drivers</h3>
-              <p className="text-[12px] text-neutral-500 mt-0.5">
-                What the model leaned on most.
-              </p>
-            </header>
-            <div className="px-5 pb-4 space-y-2.5">
-              {drivers.slice(0, 3).map((d, i) => {
-                const isUp = d.direction === "positive"
-                const contribution = formatHl(Math.abs(d.shap_value))
-                return (
-                  <div key={i} className="flex items-center gap-3">
-                    <div
-                      className={`shrink-0 inline-flex h-6 w-6 items-center justify-center rounded-full text-[12px] font-semibold ${
-                        isUp
-                          ? "bg-[var(--positive)]/10 text-[var(--positive)]"
-                          : "bg-[var(--negative)]/10 text-[var(--negative)]"
-                      }`}
-                      aria-label={isUp ? "Positive driver" : "Negative driver"}
-                    >
-                      {isUp ? "↑" : "↓"}
-                    </div>
-                    <div className="min-w-0 flex-1 flex items-center justify-between gap-2">
-                      <span className="text-[13px] font-medium text-neutral-900 truncate">
-                        {driverLabel(d.feature)}
-                      </span>
-                      <span
-                        className={`text-[11.5px] tabular-nums shrink-0 ${
-                          isUp ? "text-[var(--positive)]" : "text-[var(--negative)]"
-                        }`}
-                      >
-                        {isUp ? "+" : "−"}{contribution}
-                      </span>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </section>
+        </header>
+        <div className="px-3 pb-3 pt-1">
+          <ForecastChart
+            points={focused}
+            promoWindows={forecast.promo_windows ?? []}
+            events={forecast.events ?? []}
+            drivers={drivers}
+            signalsTimeline={signalsTimeline?.months ?? []}
+          />
         </div>
+        <ExternalContextLine signals={signals} />
+        {narrative && narrative.bullets?.length > 0 && (
+          <div className="border-t border-neutral-200 px-5 py-3 text-[12.5px] text-neutral-600">
+            {narrative.bullets[0]}
+          </div>
+        )}
+      </section>
+
+      {/* Supporting context row — Recent performance, Planned promos, Top
+          drivers. Three equal-height columns (cards stretch to the tallest
+          in the row); if any one is missing, the others widen to fit. */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
+        {currentGap && currentGap.history_hl && currentGap.history_hl.length > 0 && (
+          <RecentPerformanceCard history={currentGap.history_hl} />
+        )}
+
+        {forecast.promo_windows && forecast.promo_windows.length > 0 && (
+          <PromosInPeriodCard
+            windows={forecast.promo_windows}
+            targetPeriod={targetPeriod}
+          />
+        )}
+
+        <section className="h-full rounded-2xl border border-neutral-200 bg-white">
+          <header className="px-4 pt-3 pb-2">
+            <h3 className="text-[13px] font-semibold text-neutral-900">
+              Why this forecast
+            </h3>
+          </header>
+          <div className="px-4 pb-3 space-y-2">
+            {drivers.slice(0, 3).map((d, i) => {
+              const isUp = d.direction === "positive"
+              const contribution = formatHl(Math.abs(d.shap_value))
+              const hint = driverHint(d.feature)
+              return (
+                <div
+                  key={i}
+                  className="flex items-center gap-3"
+                  // Hover-tooltip explanation per driver — keeps the row
+                  // compact while still letting curious users read the
+                  // business-language hint.
+                  title={hint}
+                >
+                  <div
+                    className={`shrink-0 inline-flex h-6 w-6 items-center justify-center rounded-full text-[12px] font-semibold ${
+                      isUp
+                        ? "bg-[var(--positive)]/10 text-[var(--positive)]"
+                        : "bg-[var(--negative)]/10 text-[var(--negative)]"
+                    }`}
+                    aria-label={isUp ? "Positive driver" : "Negative driver"}
+                  >
+                    {isUp ? "↑" : "↓"}
+                  </div>
+                  <div className="min-w-0 flex-1 flex items-center justify-between gap-2">
+                    <span className="text-[13px] font-medium text-neutral-900 truncate">
+                      {driverLabel(d.feature)}
+                    </span>
+                    <span
+                      className={`text-[11.5px] tabular-nums shrink-0 ${
+                        isUp ? "text-[var(--positive)]" : "text-[var(--negative)]"
+                      }`}
+                    >
+                      {isUp ? "+" : "−"}{contribution}
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
       </div>
 
       {/* Three plays the LLM proposed. Each card → Simulator prefilled with
@@ -287,7 +290,7 @@ function ScenarioCard({
   return (
     <Link
       href={href as Parameters<typeof Link>[0]["href"]}
-      className={`group flex items-center gap-3 rounded-xl border bg-white px-3.5 py-3 transition-all hover:border-neutral-400 hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] ${
+      className={`group flex h-full items-center gap-3 rounded-xl border bg-white px-4 py-4 transition-all hover:border-neutral-400 hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] ${
         isBalanced ? "border-neutral-900" : "border-neutral-200"
       }`}
     >
@@ -300,7 +303,7 @@ function ScenarioCard({
             {meta.tag}
           </span>
         </div>
-        <p className="mt-0.5 text-[11.5px] text-neutral-500 leading-snug truncate">
+        <p className="mt-0.5 text-[11.5px] text-neutral-500 leading-snug line-clamp-2">
           {scenario.headline}
         </p>
       </div>
@@ -365,36 +368,61 @@ function RecentPerformanceCard({ history }: { history: number[] }) {
   const misses = last.length - beats
 
   return (
-    <section className="rounded-2xl border border-neutral-200 bg-white">
-      <header className="px-5 pt-4 pb-2">
+    <section className="h-full rounded-2xl border border-neutral-200 bg-white">
+      <header className="px-4 pt-3 pb-2">
         <h3 className="text-[13px] font-semibold text-neutral-900">Recent performance</h3>
         <p className="text-[12px] text-neutral-500 mt-0.5 tabular-nums">
           Last {last.length} months · {beats} beat / {misses} missed target
         </p>
       </header>
-      <div className="px-5 pb-4">
-        <div className="flex items-end gap-1.5 h-[64px]">
-          {last.map((v, i) => {
-            const pct = Math.abs(v) / peak
-            const isPositive = v >= 0
-            const heightPct = Math.max(8, pct * 100)
-            return (
-              <div
-                key={i}
-                className="flex-1 flex flex-col items-center justify-end h-full"
-                title={`${formatHl(v)} vs target`}
-              >
+      <div className="px-4 pb-3">
+        {/* Centered baseline: positive months grow up from the middle,
+            negative months grow down. Zero line sits at the mid-height
+            so the direction reads immediately. */}
+        <div className="relative h-[56px]">
+          <div className="absolute inset-x-0 top-1/2 h-px bg-neutral-200" />
+          <div className="absolute inset-0 flex gap-1.5">
+            {last.map((v, i) => {
+              const pct = Math.abs(v) / peak
+              // Each bar can take up to ~95% of its half (top or bottom).
+              const heightPct = Math.max(6, pct * 95)
+              const isPositive = v >= 0
+              return (
                 <div
-                  className="w-full rounded-sm"
-                  style={{
-                    height: `${heightPct}%`,
-                    backgroundColor: isPositive ? "var(--positive)" : "var(--negative)",
-                    opacity: 0.85,
-                  }}
-                />
-              </div>
-            )
-          })}
+                  key={i}
+                  className="flex-1 flex flex-col h-full"
+                  title={`${formatHl(v)} vs target`}
+                >
+                  {/* Top half — only renders the bar when positive. */}
+                  <div className="flex-1 flex flex-col justify-end">
+                    {isPositive && (
+                      <div
+                        className="rounded-t-sm"
+                        style={{
+                          height: `${heightPct}%`,
+                          backgroundColor: "var(--positive)",
+                          opacity: 0.9,
+                        }}
+                      />
+                    )}
+                  </div>
+                  {/* Bottom half — only renders the bar when negative. */}
+                  <div className="flex-1 flex flex-col">
+                    {!isPositive && (
+                      <div
+                        className="rounded-b-sm"
+                        style={{
+                          height: `${heightPct}%`,
+                          backgroundColor: "var(--negative)",
+                          opacity: 0.9,
+                        }}
+                      />
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         </div>
         <div className="mt-2 flex justify-between text-[10px] text-neutral-400 tabular-nums">
           <span>{last.length}mo ago</span>
@@ -424,17 +452,17 @@ function PromosInPeriodCard({
   const sorted = [...windows].sort((a, b) =>
     a.period_start.localeCompare(b.period_start),
   )
-  const top = sorted.slice(0, 4)
+  const top = sorted.slice(0, 3)
   return (
-    <section className="rounded-2xl border border-neutral-200 bg-white">
-      <header className="px-5 pt-4 pb-2">
+    <section className="h-full rounded-2xl border border-neutral-200 bg-white">
+      <header className="px-4 pt-3 pb-2">
         <h3 className="text-[13px] font-semibold text-neutral-900">Planned promos</h3>
         <p className="text-[12px] text-neutral-500 mt-0.5">
           Trade activity in the chart window
           {targetPeriod ? ` around ${humanPeriod(targetPeriod)}` : ""}.
         </p>
       </header>
-      <ul className="px-5 pb-4 space-y-2">
+      <ul className="px-4 pb-3 space-y-1.5">
         {top.map((w, i) => (
           <li key={i} className="flex items-center gap-3 text-[12.5px]">
             <span className="shrink-0 h-2 w-2 rounded-full bg-[color:var(--positive)]" />

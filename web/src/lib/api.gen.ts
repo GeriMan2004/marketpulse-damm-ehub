@@ -423,6 +423,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/external-signals/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * External Signals Timeline
+         * @description Per-month external signals for the chart's storytelling layer.
+         *
+         *     Used by the forecast chart's tooltip and signal-track strip so the
+         *     user can see *which months* are touched by an event, a heatwave, or
+         *     a search-trend spike — at a glance, without leaving the chart.
+         */
+        get: operations["external_signals_timeline_api_external_signals_timeline_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/pricing/gross-per-hl": {
         parameters: {
             query?: never;
@@ -681,6 +705,19 @@ export interface components {
             /** Events */
             events: components["schemas"]["CalendarEvent"][];
         };
+        /**
+         * ExternalSignalsTimeline
+         * @description Bundle of per-month signals across the forecast window. Returned
+         *     by /api/external-signals/timeline.
+         */
+        ExternalSignalsTimeline: {
+            /** Sku */
+            sku: string;
+            /** Sub Channel */
+            sub_channel: string;
+            /** Months */
+            months: components["schemas"]["PeriodSignals"][];
+        };
         /** ForecastPoint */
         ForecastPoint: {
             /** Period */
@@ -886,6 +923,27 @@ export interface components {
              * @description Latest refresh timestamp; null if cache is empty.
              */
             updated_at?: string | null;
+        };
+        /**
+         * PeriodSignals
+         * @description Per-month signals across a horizon, used to drive the chart's
+         *     hover-tooltip storytelling: weather state, search trend, events.
+         */
+        PeriodSignals: {
+            /** Period */
+            period: string;
+            /** Period Start */
+            period_start: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "actuals" | "prior_year";
+            weather: components["schemas"]["WeatherSignal"];
+            search: components["schemas"]["SearchSignal"];
+            retail: components["schemas"]["RetailSignal"];
+            /** Events */
+            events: components["schemas"]["CalendarEvent"][];
         };
         /** PromoROI */
         PromoROI: {
@@ -1914,6 +1972,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExternalSignals"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    external_signals_timeline_api_external_signals_timeline_get: {
+        parameters: {
+            query: {
+                sku: string;
+                sub_channel: string;
+                from?: string | null;
+                to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalSignalsTimeline"];
                 };
             };
             /** @description Validation Error */
