@@ -1,5 +1,10 @@
 # Decisions & drift log
 
+> Historical drift log. This file intentionally preserves old decisions,
+> abandoned plans, and superseded paths. For the current implemented state,
+> use [README.md](README.md), [DATA.md](DATA.md), [ML.md](ML.md),
+> [STACK.md](STACK.md), [PAGES.md](PAGES.md), and [PLAN.md](PLAN.md).
+
 A running log of every place the implementation diverged from the original plan, what we found, and what we decided instead. New entries go at the **top**.
 
 Format: **Each entry has a status, context (what was planned), what we found, the new decision, and where the change landed.**

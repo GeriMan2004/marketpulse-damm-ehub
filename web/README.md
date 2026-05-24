@@ -1,36 +1,73 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Ramp Web
 
-## Getting Started
+Next.js frontend for the MarketPulse/Ramp Damm hackathon demo.
 
-First, run the development server:
+## Stack
+
+- Next.js 16 App Router
+- React 19
+- TypeScript
+- Tailwind CSS v4
+- Recharts
+- Radix/shadcn-style local primitives
+- Lucide React
+- SWR
+- openapi-fetch + generated OpenAPI types
+
+## Run
+
+From repo root:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+make web
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Or from this folder:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+pnpm install
+pnpm dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open:
 
-## Learn More
+```text
+http://localhost:3000
+```
 
-To learn more about Next.js, take a look at the following resources:
+Backend is expected on:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```text
+http://localhost:8000
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Important Files
 
-## Deploy on Vercel
+| File/folder | Purpose |
+|---|---|
+| `src/app/(app)/page.tsx` | Main dashboard |
+| `src/app/(app)/decision/[sku]/[channel]/` | Forecast decision flow |
+| `src/app/(app)/promos/page.tsx` | Promotion ROI table |
+| `src/app/(app)/brief/` | Customer brief flow |
+| `src/components/charts/` | Forecast, simulator, quality, external charts |
+| `src/components/inbox/` | Dashboard workflow components |
+| `src/components/ui/` | Local UI primitives |
+| `src/lib/api.ts` | API helper |
+| `src/lib/api.gen.ts` | Generated OpenAPI types |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Regenerate API Types
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Run from repo root:
+
+```bash
+make types
+```
+
+Do not edit `src/lib/api.gen.ts` manually.
+
+## Checks
+
+```bash
+pnpm exec tsc --noEmit
+pnpm lint
+```

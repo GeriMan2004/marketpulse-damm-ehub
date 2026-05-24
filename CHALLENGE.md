@@ -63,3 +63,19 @@ Week and month. No rolling forecast is provided — work with the given sales, b
 ## 🤖 What's allowed
 
 Generative AI, LLMs, AutoML, APIs, no-code/low-code tools, notebooks, Streamlit, Power BI — anything. Document how to run it and its dependencies.
+
+## Current Implementation Mapping
+
+| Brief requirement | Current implementation |
+|---|---|
+| UK sales history | `UK DATA.xlsx` parsed into `wide_monthly.parquet` |
+| Monthly budget or target estimate | `targets.parquet`, derived from prior-year actuals / trailing median |
+| Promotion plan | `Damm Trade Plan - promotions.xlsx` parsed into `promos.parquet` |
+| Weekly and/or monthly forecast | Monthly trained forecast; weekly view derived from monthly forecast |
+| Forecast vs budget/target dashboard | `/` and `/decision/[sku]/[channel]` |
+| Deviations and causes | `/api/gap`, `/api/drivers`, SHAP explanations, external context |
+| Promotion impact | `/promos`, `/api/promos/roi`, promo windows for `GROCERY` |
+| Commercial recommendations | `/api/recommend`, scenario cards, simulator |
+| External sources documented | [DATA.md](DATA.md), [STACK.md](STACK.md), [README.md](README.md) |
+
+Important wording for demo: because no reliable official budget table is consumed, say **target estimate** when explaining the comparison.
