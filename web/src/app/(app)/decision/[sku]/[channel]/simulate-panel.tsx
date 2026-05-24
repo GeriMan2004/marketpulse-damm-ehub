@@ -94,6 +94,25 @@ export function SimulatePanel({
     fetcher,
   )
 
+  // Pull the full target series (per month for this SKU × channel) so
+  // the dashed target line is on the chart BEFORE the user runs the
+  // simulation. Without this, the target only appears after Run via
+  // result.targets_by_period and the user can't see what they're aiming
+  // for ahead of choosing a discount.
+  const { data: targetRows } = useSWR<Array<{ period: string; target_hl: number }>>(
+    `/api/targets?sku=${encodeURIComponent(sku)}&sub_channel=${encodeURIComponent(sub_channel)}`,
+    async (url: string) => {
+      const res = await fetch(url, { cache: "no-store" })
+      if (!res.ok) return []
+      return res.json() as Promise<Array<{ period: string; target_hl: number }>>
+    },
+  )
+  const targetByPeriodAll = useMemo(() => {
+    const out: Record<string, number> = {}
+    for (const r of targetRows ?? []) out[r.period] = r.target_hl
+    return out
+  }, [targetRows])
+
   const [actionType, setActionType] = useState<ActionType>(prefillAction)
   const [effortLevel, setEffortLevel] = useState<EffortLevel>(prefillEffort)
   const [discount, setDiscount] = useState(initialDiscount)
@@ -124,28 +143,29 @@ export function SimulatePanel({
   const warning = result && !resultHasPoints ? result.notes : runError
 
   const chartSeries = useMemo(() => {
+    // Target line is ALWAYS rendered when we have the data — drawn from
+    // /api/targets in targetByPeriodAll, not from the simulation result.
+    // Before Run the chart shows current forecast + target; after Run it
+    // adds the simulated line. The user can see "what we're aiming for"
+    // before deciding on a discount.
     if (resultHasPoints && result) {
       const simulatedByPeriod = new Map(
         (result.simulated.points ?? []).map((p) => [p.period, p.point]),
       )
-      // targets_by_period is a new field on SimulationResult — only the
-      // months the simulator was asked about have targets attached, so
-      // we look up per-period and accept null for months outside scope.
-      const targetByPeriod = (result.targets_by_period ?? {}) as Record<string, number>
       return baselinePoints.map((p) => ({
         period: p.period,
         baseline: p.point,
         simulated: simulatedByPeriod.get(p.period) ?? p.point,
-        target: targetByPeriod[p.period] ?? null,
+        target: targetByPeriodAll[p.period] ?? null,
       }))
     }
     return baselinePoints.map((p) => ({
       period: p.period,
       baseline: p.point,
       simulated: null,
-      target: null,
+      target: targetByPeriodAll[p.period] ?? null,
     }))
-  }, [baselinePoints, result, resultHasPoints])
+  }, [baselinePoints, result, resultHasPoints, targetByPeriodAll])
 
   // Per-month "above target" tally — drives the badge and notes line.
   // Counts ONLY months that have a target (i.e. the months the
