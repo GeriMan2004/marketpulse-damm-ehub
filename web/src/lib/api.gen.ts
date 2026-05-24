@@ -132,6 +132,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/promos/budget-flow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Promo Budget Flow */
+        get: operations["get_promo_budget_flow_api_promos_budget_flow_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/plays": {
         parameters: {
             query?: never;
@@ -898,6 +915,70 @@ export interface components {
             /** Plays */
             plays: components["schemas"]["Play"][];
         };
+        /** PromoAffectedProduct */
+        PromoAffectedProduct: {
+            /** Material Id */
+            material_id: string;
+            /** Brand */
+            brand: string;
+            /** Label */
+            label: string;
+            /** Forecast Hl */
+            forecast_hl?: number | null;
+            /** Target Hl */
+            target_hl?: number | null;
+            /** Gap Pct */
+            gap_pct?: number | null;
+            /** Estimated Lift Pct */
+            estimated_lift_pct?: number | null;
+        };
+        /** PromoBudgetFlow */
+        PromoBudgetFlow: {
+            /** Month */
+            month: string;
+            /**
+             * Available Months
+             * @default []
+             */
+            available_months: string[];
+            /** Total Promo Events */
+            total_promo_events: number;
+            /** Dominant Promo Type */
+            dominant_promo_type?: string | null;
+            /** Flow */
+            flow: components["schemas"]["PromoBudgetFlowItem"][];
+            preview?: components["schemas"]["PromoBudgetPreview"] | null;
+        };
+        /** PromoBudgetFlowItem */
+        PromoBudgetFlowItem: {
+            /** Promo Type */
+            promo_type: string;
+            /** Usage Pct */
+            usage_pct: number;
+            /** Event Count */
+            event_count: number;
+            /** Avg Lift Pct */
+            avg_lift_pct?: number | null;
+            /** Avg Lift Hl */
+            avg_lift_hl?: number | null;
+            /**
+             * Confidence
+             * @default low
+             * @enum {string}
+             */
+            confidence: "low" | "medium" | "high";
+        };
+        /** PromoBudgetPreview */
+        PromoBudgetPreview: {
+            /** Promo Type */
+            promo_type: string;
+            /** Headline */
+            headline: string;
+            /** Explanation */
+            explanation: string;
+            /** Affected Products */
+            affected_products: components["schemas"]["PromoAffectedProduct"][];
+        };
         /** PromoROI */
         PromoROI: {
             /** Promo Type */
@@ -1368,6 +1449,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PromoROI"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_promo_budget_flow_api_promos_budget_flow_get: {
+        parameters: {
+            query?: {
+                month?: string | null;
+                promo_type?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromoBudgetFlow"];
                 };
             };
             /** @description Validation Error */

@@ -16,7 +16,13 @@ from .gap import GapItem
 from .meta import MetaResponse
 from .plays import Play, PlaysResponse
 from .pricing import GrossPriceRate
-from .promos import PromoROI
+from .promos import (
+    PromoAffectedProduct,
+    PromoBudgetFlow,
+    PromoBudgetFlowItem,
+    PromoBudgetPreview,
+    PromoROI,
+)
 from .simulate import SimulationRequest, SimulationResult
 
 __all__ = [
@@ -36,6 +42,10 @@ __all__ = [
     "MetaResponse",
     "Play",
     "PlaysResponse",
+    "PromoAffectedProduct",
+    "PromoBudgetFlow",
+    "PromoBudgetFlowItem",
+    "PromoBudgetPreview",
     "PromoROI",
     "Pulse",
     "RetailSignal",
