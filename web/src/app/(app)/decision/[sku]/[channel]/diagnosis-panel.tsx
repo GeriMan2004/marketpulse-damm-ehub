@@ -12,7 +12,7 @@
  */
 
 import Link from "next/link"
-import { ArrowRight } from "lucide-react"
+import { ArrowRight, History, CalendarClock, Target } from "lucide-react"
 import { ForecastChart } from "@/components/charts/ForecastChart"
 import { serverFetch } from "@/lib/api"
 import { driverHint, driverLabel } from "@/lib/driver-labels"
@@ -24,11 +24,10 @@ type ForecastSeries = components["schemas"]["ForecastSeries"]
 type ForecastPoint = components["schemas"]["ForecastPoint"]
 type Driver = components["schemas"]["Driver"]
 type ExplainView = components["schemas"]["ExplainViewSummary"]
-type ExternalSignalsT = components["schemas"]["ExternalSignals"]
 type ExternalSignalsTimelineT = components["schemas"]["ExternalSignalsTimeline"]
 type GapItem = components["schemas"]["GapItem"]
-type RecResponse = components["schemas"]["RecommendationResponse"]
-type RecScenario = components["schemas"]["RecommendationScenario"]
+type PlaysResponse = components["schemas"]["PlaysResponse"]
+type Play = components["schemas"]["Play"]
 
 const CONFIDENCE_CHIP: Record<string, string> = {
   high:   "bg-[color:var(--positive-soft)] text-[color:var(--positive)]",
@@ -36,24 +35,28 @@ const CONFIDENCE_CHIP: Record<string, string> = {
   low:    "bg-[color:var(--negative-soft)] text-[color:var(--negative)]",
 }
 
-const SCENARIO_META: Record<
-  RecScenario["label"],
-  { title: string; tag: string; tagClass: string }
+// Per-kind visual + grouping copy. The kind is the *type of bet* the
+// user is choosing — Repeat what worked / Catch an event / Close the gap —
+// not a risk-level abstraction.
+const PLAY_META: Record<
+  Play["kind"],
+  { eyebrow: string; icon: typeof History; iconClass: string; isPrimary?: boolean }
 > = {
-  conservative: {
-    title: "Conservative",
-    tag: "Low risk",
-    tagClass: "bg-neutral-100 text-neutral-600",
+  repeat: {
+    eyebrow: "Repeat what worked",
+    icon: History,
+    iconClass: "text-neutral-600 bg-neutral-100",
   },
-  balanced: {
-    title: "Balanced",
-    tag: "Recommended",
-    tagClass: "bg-neutral-900 text-white",
+  event: {
+    eyebrow: "Catch an event",
+    icon: CalendarClock,
+    iconClass: "text-[color:var(--positive)] bg-[color:var(--positive-soft)]",
   },
-  aggressive: {
-    title: "Aggressive",
-    tag: "High upside",
-    tagClass: "bg-[color:var(--positive-soft)] text-[color:var(--positive)]",
+  "gap-closer": {
+    eyebrow: "Close the gap",
+    icon: Target,
+    iconClass: "text-white bg-neutral-900",
+    isPrimary: true,
   },
 }
 
@@ -69,21 +72,16 @@ export async function DiagnosisPanel({
   const baseQ = `?sku=${encodeURIComponent(sku)}&sub_channel=${encodeURIComponent(sub_channel)}`
   const fcQ = `${baseQ}&granularity=${granularity}`
 
-  const [forecast, drivers, rec, signals, signalsTimeline, targets] = await Promise.all([
+  const [forecast, drivers, plays, signalsTimeline, targets] = await Promise.all([
     serverFetch<ForecastSeries>(`/api/forecast${fcQ}`),
     serverFetch<Driver[]>(`/api/drivers${baseQ}`),
-    targetPeriod
-      ? serverFetch<RecResponse>("/api/recommend", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ sku, sub_channel, period: targetPeriod }),
-        }).catch(() => null)
-      : Promise.resolve(null),
-    targetPeriod
-      ? serverFetch<ExternalSignalsT>(
-          `/api/external-signals${baseQ}&period=${encodeURIComponent(targetPeriod)}`,
-        ).catch(() => null)
-      : Promise.resolve(null),
+    // Three signal-grounded plays for this SKU × channel × target month.
+    // Each play is anchored on a different data source (historical promo
+    // ROI / upcoming events / forecast-vs-target) so the user is choosing
+    // a *type of bet* rather than a generic risk dial.
+    serverFetch<PlaysResponse>(
+      `/api/plays${baseQ}${targetPeriod ? `&period=${encodeURIComponent(targetPeriod)}` : ""}`,
+    ).catch(() => null),
     // Per-month signals across the chart window — drives the event-chip
     // strip above the chart and the per-period state in the tooltip.
     serverFetch<ExternalSignalsTimelineT>(`/api/external-signals/timeline${baseQ}`)
@@ -136,12 +134,14 @@ export async function DiagnosisPanel({
       narrativeRaw.bullets?.[0]?.startsWith("Unable to generate"))
   const narrative = isFallback ? null : narrativeRaw
 
-  // Order the scenarios so balanced sits in the middle visually, matching
-  // the user's natural reading of "safer ← recommended → bolder".
-  const scenariosOrdered = rec?.scenarios
-    ? (["conservative", "balanced", "aggressive"] as const)
-        .map((label) => rec.scenarios.find((s) => s.label === label))
-        .filter((s): s is RecScenario => !!s)
+  // Order the plays so the gap-closer (the primary recommendation) sits
+  // in the middle visually, with Repeat on the left (safest, grounded in
+  // history) and Catch-an-event on the right (forward-looking).
+  const PLAY_ORDER: Play["kind"][] = ["repeat", "gap-closer", "event"]
+  const playsOrdered = plays?.plays
+    ? PLAY_ORDER.map((kind) => plays.plays.find((p) => p.kind === kind)).filter(
+        (p): p is Play => !!p,
+      )
     : []
 
   return (
@@ -237,12 +237,10 @@ export async function DiagnosisPanel({
           <RecentPerformanceCard history={currentGap.history_hl} />
         )}
 
-        {forecast.promo_windows && forecast.promo_windows.length > 0 && (
-          <PromosInPeriodCard
-            windows={forecast.promo_windows}
-            targetPeriod={targetPeriod}
-          />
-        )}
+        <PromosInPeriodCard
+          windows={forecast.promo_windows ?? []}
+          targetPeriod={targetPeriod}
+        />
 
         <section className="h-full rounded-2xl border border-neutral-200 bg-white">
           <header className="px-4 pt-3 pb-2">
@@ -298,19 +296,19 @@ export async function DiagnosisPanel({
           row absorb the remaining viewport height, and `h-full` on each
           card stretches the surfaces with it — so the page fits without
           scrolling and the actions get the prominence they deserve. */}
-      {scenariosOrdered.length > 0 && (
-        <section className="flex-1 flex flex-col min-h-[160px]">
+      {playsOrdered.length > 0 && (
+        <section className="flex-1 flex flex-col min-h-[180px]">
           <header className="mb-3">
             <h3 className="text-[13px] font-semibold text-neutral-900">
               Pick a play
             </h3>
           </header>
           <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
-            {scenariosOrdered.map((s) => (
-              <ScenarioCard
-                key={s.label}
-                scenario={s}
-                href={simulateHrefFor(sku, sub_channel, targetPeriod, s.actions)}
+            {playsOrdered.map((p) => (
+              <PlayCard
+                key={p.kind}
+                play={p}
+                href={simulateHrefForPlay(sku, sub_channel, targetPeriod, p)}
               />
             ))}
           </div>
@@ -320,84 +318,110 @@ export async function DiagnosisPanel({
   )
 }
 
-function ScenarioCard({
-  scenario,
-  href,
-}: {
-  scenario: RecScenario
-  href: string
-}) {
-  const meta = SCENARIO_META[scenario.label]
-  const isBalanced = scenario.label === "balanced"
-  const closurePct = scenario.total_expected_gap_closed_pct
+/**
+ * A single signal-grounded play. The eyebrow + icon name the type of bet
+ * the user is choosing; the title is the concrete action; the "why" line
+ * cites the actual data source that surfaced it. Hovering shows the full
+ * grounding sentence; clicking through pre-fills the simulator with the
+ * play's months / promo / discount / effort.
+ */
+function PlayCard({ play, href }: { play: Play; href: string }) {
+  const meta = PLAY_META[play.kind]
+  const Icon = meta.icon
+  const closurePct = play.expected_gap_closed_pct ?? 0
   const closureColor = closurePct > 0 ? "text-[var(--positive)]" : "text-neutral-700"
 
   return (
     <Link
       href={href as Parameters<typeof Link>[0]["href"]}
-      className={`group flex h-full items-center gap-3 rounded-xl border bg-white px-4 py-4 transition-all hover:border-neutral-400 hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] ${
-        isBalanced ? "border-neutral-900" : "border-neutral-200"
+      className={`group flex h-full flex-col gap-2.5 rounded-xl border bg-white px-4 py-3.5 transition-all hover:border-neutral-400 hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] ${
+        meta.isPrimary ? "border-neutral-900" : "border-neutral-200"
       }`}
     >
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-[13px] font-semibold text-neutral-900">{meta.title}</span>
+      {/* Eyebrow + gap-closed badge. The eyebrow itself names the kind of
+          play (REPEAT / CLOSE THE GAP / CATCH AN EVENT) so the body below
+          doesn't need to repeat the source. */}
+      <div className="flex items-center gap-2">
+        <span
+          className={`inline-flex h-5 w-5 items-center justify-center rounded-md ${meta.iconClass}`}
+          aria-hidden
+        >
+          <Icon className="h-3 w-3" />
+        </span>
+        <span className="text-[10.5px] font-medium uppercase tracking-[0.14em] text-neutral-500">
+          {meta.eyebrow}
+        </span>
+        {play.expected_gap_closed_pct != null && (
           <span
-            className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wide ${meta.tagClass}`}
+            className={`ml-auto text-[12px] font-semibold tabular-nums ${closureColor}`}
+            title="Estimated share of the current month's gap this play would close"
           >
-            {meta.tag}
+            {formatPercent(closurePct, 0)}
           </span>
-        </div>
-        <p className="mt-0.5 text-[11.5px] text-neutral-500 leading-snug line-clamp-2">
-          {scenario.headline}
-        </p>
+        )}
       </div>
-      <div className="shrink-0 text-right tabular-nums">
-        <div className={`text-[16px] font-semibold leading-none ${closureColor}`}>
-          {formatPercent(closurePct, 0)}
-        </div>
-        <div className="text-[10px] text-neutral-400 mt-0.5">gap closed</div>
+
+      {/* Concrete action — what the user would do. */}
+      <div className="text-[13.5px] font-semibold text-neutral-900 leading-snug">
+        {play.title}
       </div>
-      <ArrowRight className="h-4 w-4 text-neutral-400 shrink-0 group-hover:text-neutral-700 transition-colors" />
+
+      {/* One-liner grounding — full sentence lives in the hover title so
+          the card stays compact while the curious user can dig in. */}
+      <p
+        className="mt-auto text-[11.5px] text-neutral-500 leading-snug line-clamp-2"
+        title={play.why}
+      >
+        {play.why}
+      </p>
+
+      <div className="flex items-center justify-between gap-2 text-[11px] text-neutral-400">
+        <span>
+          {(play.months ?? []).length > 0
+            ? (play.months ?? []).length === 1
+              ? (play.months ?? [])[0]
+              : `${(play.months ?? []).length} months`
+            : "—"}
+        </span>
+        <ArrowRight className="h-3.5 w-3.5 group-hover:text-neutral-700 transition-colors" />
+      </div>
     </Link>
   )
 }
 
 /**
- * Build the Simulator URL with prefill params taken from the balanced
- * scenario's first action. The simulator panel reads `months`, `discount`
- * and `promo` from the query string; missing params fall back to its own
- * defaults so this stays forward-compatible.
+ * Build the Simulator URL with prefill params from a Play. The simulator
+ * panel reads `months`, `discount`, `promo` (and accepts `effort` /
+ * `action_type` via its own state) from the query string.
  */
-function simulateHrefFor(
+function simulateHrefForPlay(
   sku: string,
   sub_channel: string,
-  period: string | undefined,
-  actions: components["schemas"]["RecommendationAction"][] | undefined,
+  fallbackPeriod: string | undefined,
+  play: Play,
 ): string {
+  const period = (play.months ?? [])[0] ?? fallbackPeriod
   const base =
     `/decision/${encodeURIComponent(sku)}/${encodeURIComponent(sub_channel)}` +
     `?tab=simulate` +
     (period ? `&period=${encodeURIComponent(period)}` : "")
-  const first = actions?.[0]
-  if (!first) return base
-  const months = (first.target_months ?? []).join(",")
-  const promo = guessPromoType(first.action)
   const parts = [base]
-  if (months) parts.push(`months=${encodeURIComponent(months)}`)
-  if (promo) parts.push(`promo=${encodeURIComponent(promo)}`)
+  if ((play.months ?? []).length > 0) {
+    parts.push(`months=${encodeURIComponent((play.months ?? []).join(","))}`)
+  }
+  if (play.action_type) {
+    parts.push(`action=${encodeURIComponent(play.action_type)}`)
+  }
+  if (play.promo_type) {
+    parts.push(`promo=${encodeURIComponent(play.promo_type)}`)
+  }
+  if (play.discount_pct != null) {
+    parts.push(`discount=${play.discount_pct}`)
+  }
+  if (play.effort_level) {
+    parts.push(`effort=${encodeURIComponent(play.effort_level)}`)
+  }
   return parts.join("&")
-}
-
-/** Cheap heuristic: pull a promo-type keyword out of the action sentence. */
-function guessPromoType(action: string): string | null {
-  const a = action.toLowerCase()
-  if (a.includes("multi-buy") || a.includes("multi buy") || a.includes("for £")) return "multi-buy"
-  if (a.includes("price-cut") || a.includes("price cut") || a.includes("discount")) return "price-cut"
-  if (a.includes("rollback")) return "rollback"
-  if (a.includes("clearance")) return "clearance"
-  if (a.includes("listing")) return "listing"
-  return null
 }
 
 /**
@@ -492,37 +516,45 @@ function PromosInPeriodCard({
   windows: PromoWindow[]
   targetPeriod: string | undefined
 }) {
-  // Sort by start date; show up to 4. The user can see the rest as bands
-  // on the chart above.
   const sorted = [...windows].sort((a, b) =>
     a.period_start.localeCompare(b.period_start),
   )
   const top = sorted.slice(0, 3)
+  const isEmpty = sorted.length === 0
   return (
     <section className="h-full rounded-2xl border border-neutral-200 bg-white">
       <header className="px-4 pt-3 pb-2">
         <h3 className="text-[13px] font-semibold text-neutral-900">Planned promos</h3>
         <p className="text-[12px] text-neutral-500 mt-0.5">
-          Trade activity in the chart window
-          {targetPeriod ? ` around ${humanPeriod(targetPeriod)}` : ""}.
+          {isEmpty
+            ? `No trade activity planned${targetPeriod ? ` around ${humanPeriod(targetPeriod)}` : ""}.`
+            : `Trade activity in the chart window${targetPeriod ? ` around ${humanPeriod(targetPeriod)}` : ""}.`}
         </p>
       </header>
-      <ul className="px-4 pb-3 space-y-1.5">
-        {top.map((w, i) => (
-          <li key={i} className="flex items-center gap-3 text-[12.5px]">
-            <span className="shrink-0 h-2 w-2 rounded-full bg-[color:var(--positive)]" />
-            <span className="font-medium text-neutral-900 truncate">{w.label}</span>
-            <span className="ml-auto text-[11px] text-neutral-500 tabular-nums shrink-0">
-              {shortDate(w.period_start)} – {shortDate(w.period_end)}
-            </span>
-          </li>
-        ))}
-        {sorted.length > top.length && (
-          <li className="text-[11px] text-neutral-400">
-            +{sorted.length - top.length} more on the chart
-          </li>
-        )}
-      </ul>
+      {isEmpty ? (
+        <div className="px-4 pb-3 text-[12px] text-neutral-500 leading-relaxed">
+          Nothing in the trade plan touches this SKU and channel right now —
+          a play here would be a fresh decision rather than a tweak to an
+          existing promo.
+        </div>
+      ) : (
+        <ul className="px-4 pb-3 space-y-1.5">
+          {top.map((w, i) => (
+            <li key={i} className="flex items-center gap-3 text-[12.5px]">
+              <span className="shrink-0 h-2 w-2 rounded-full bg-[color:var(--positive)]" />
+              <span className="font-medium text-neutral-900 truncate">{w.label}</span>
+              <span className="ml-auto text-[11px] text-neutral-500 tabular-nums shrink-0">
+                {shortDate(w.period_start)} – {shortDate(w.period_end)}
+              </span>
+            </li>
+          ))}
+          {sorted.length > top.length && (
+            <li className="text-[11px] text-neutral-400">
+              +{sorted.length - top.length} more on the chart
+            </li>
+          )}
+        </ul>
+      )}
     </section>
   )
 }
@@ -530,44 +562,6 @@ function PromosInPeriodCard({
 function shortDate(iso: string): string {
   const d = new Date(iso)
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })
-}
-
-/**
- * Single-line external context summary that sits under the chart in place
- * of the standalone "External context" card. Picks the most decision-
- * relevant signals (weather + first event) and drops the others; full
- * detail is still available via the /api/external-signals endpoint and
- * documented in the README.
- */
-function ExternalContextLine({ signals }: { signals: ExternalSignalsT | null }) {
-  if (!signals) return null
-  const parts: string[] = []
-
-  if (signals.weather.temp_c != null) {
-    const t = signals.weather.temp_c.toFixed(1)
-    const a = signals.weather.anomaly_c
-    if (a != null && Math.abs(a) >= 0.5) {
-      parts.push(`${t}°C (${a > 0 ? "+" : ""}${a.toFixed(1)}° vs avg)`)
-    } else {
-      parts.push(`${t}°C`)
-    }
-  }
-  if (signals.search.beer != null) {
-    parts.push(`beer interest ${signals.search.beer.toFixed(0)}`)
-  }
-  if (signals.events.length > 0) {
-    parts.push(signals.events.map((e) => e.label).join(" · "))
-  }
-  if (parts.length === 0) return null
-
-  return (
-    <div className="border-t border-neutral-200 px-5 py-2.5 text-[11.5px] text-neutral-500">
-      <span className="uppercase tracking-[0.14em] font-medium text-neutral-400 mr-2">
-        Context
-      </span>
-      {parts.join(" · ")}
-    </div>
-  )
 }
 
 /**

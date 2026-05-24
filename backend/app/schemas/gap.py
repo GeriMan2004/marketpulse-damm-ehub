@@ -25,11 +25,3 @@ class GapItem(BaseModel):
     gap_gbp: float | None = None
 
 
-class KpiSummary(BaseModel):
-    total_forecast_hl: float
-    total_budget_hl: float
-    gap_hl: float
-    gap_pct: float
-    on_track_skus: int
-    off_track_skus: int
-    period_range: tuple[str, str]    # e.g. ("Sep.26", "Dec.26")

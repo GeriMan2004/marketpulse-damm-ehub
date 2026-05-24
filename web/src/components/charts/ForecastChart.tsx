@@ -117,6 +117,20 @@ export function ForecastChart({
     }))
     .filter((row) => row.events.length > 0)
 
+  // Pad Y domain so the median line sits in the middle of the plot. The
+  // band (lo80/hi80) needs to fit too, and target can be above or below.
+  // Floor at 0 — forecast values never go negative.
+  const allValues = data.flatMap((d) => {
+    const out = [d.point, d.lo80, d.hi80]
+    if (d.target != null) out.push(d.target)
+    return out
+  })
+  const dataMin = allValues.length ? Math.min(...allValues) : 0
+  const dataMax = allValues.length ? Math.max(...allValues) : 1
+  const dataRange = Math.max(dataMax - dataMin, 1)
+  const yMin = Math.max(0, dataMin - dataRange * 0.20)
+  const yMax = dataMax + dataRange * 0.20
+
   return (
     <div className="w-full">
       {/* Events strip — labelled chips per affected month, scannable in one
@@ -149,6 +163,7 @@ export function ForecastChart({
             stroke="var(--border)"
             tickFormatter={(v) => formatHl(v)}
             width={56}
+            domain={[yMin, yMax]}
           />
           <Tooltip
             cursor={{ stroke: "var(--neutral)", strokeDasharray: "2 3", strokeWidth: 1 }}

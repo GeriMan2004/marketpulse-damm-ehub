@@ -34,9 +34,12 @@ export function RollupChips({
       </h3>
 
       {items.length === 0 ? (
-        <p className="text-[12px] text-neutral-500">{emptyHint ?? "—"}</p>
+        <p className="pl-4 text-[12px] text-neutral-500">{emptyHint ?? "—"}</p>
       ) : (
-        <div className="flex gap-2.5 pl-4 pr-4 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+        // Borderless chip rail on a soft recessed surface: secondary
+        // content recedes underneath the shadowed hero card, with the
+        // same horizontal swipe affordance as before.
+        <div className="flex gap-1.5 pl-4 pr-4 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
           {items.map((it) => (
             <Chip key={it.label} {...it} />
           ))}
@@ -49,18 +52,20 @@ export function RollupChips({
 function Chip({ label, gap_pct, gap_gbp }: ChipItem) {
   const tone = gapColor(gap_pct)
   return (
-    <div className="shrink-0 rounded-xl border border-neutral-200 bg-white px-4 py-3 min-w-[200px]">
-      <div className="text-[13px] font-semibold text-neutral-900 truncate">
+    // No border. Surface is bg-neutral-50/70 so the chip reads as a
+    // recessed pill against the page rather than a peer to the hero card.
+    // Single horizontal line: label · £ · % — the brand/channel name
+    // leads, the £ provides material context, the % is the sharp number.
+    <div className="shrink-0 inline-flex items-baseline gap-3 rounded-lg bg-neutral-50/70 px-3 py-2 hover:bg-neutral-100/80 transition-colors">
+      <span className="text-[12.5px] font-medium text-neutral-700 truncate">
         {label}
-      </div>
-      <div className="mt-1 flex items-baseline justify-between gap-3 tabular-nums">
-        <span className="text-[12px] text-neutral-500">
-          {gap_gbp != null ? `≈ ${formatGBP(gap_gbp)}` : "—"}
-        </span>
-        <span className="text-[13px] font-semibold" style={{ color: tone }}>
-          {formatPercent(gap_pct, 1)}
-        </span>
-      </div>
+      </span>
+      <span className="text-[11px] text-neutral-400 tabular-nums">
+        {gap_gbp != null ? `≈ ${formatGBP(gap_gbp)}` : "—"}
+      </span>
+      <span className="text-[12.5px] font-semibold tabular-nums" style={{ color: tone }}>
+        {formatPercent(gap_pct, 1)}
+      </span>
     </div>
   )
 }

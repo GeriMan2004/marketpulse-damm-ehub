@@ -25,7 +25,12 @@ export function UkPulseHero({ pulse }: { pulse: Pulse }) {
   return (
     <section
       aria-label="UK monthly pulse"
-      className="rounded-2xl border border-neutral-200 bg-white px-5 py-4 flex flex-col justify-center"
+      // Hero treatment: soft shadow + tighter ring border + extra padding.
+      // The shadow is the cheap trick that lifts the card off the page so
+      // the secondary chip row recedes underneath it (Stripe / Posthog
+      // / Linear pattern). bg-white stays; secondary content sits on a
+      // recessed neutral surface to complete the depth cue.
+      className="rounded-2xl ring-1 ring-neutral-200/80 bg-white px-7 py-6 flex flex-col justify-center shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.08)]"
     >
       {/* Row 1 — scope eyebrow on the left, confidence on the right.
           Compact, lets the numbers breathe below. */}
@@ -44,18 +49,18 @@ export function UkPulseHero({ pulse }: { pulse: Pulse }) {
 
       {/* Row 2 — headline gap (the answer) on the left, SKUs at risk on
           the right. Two strong anchor points instead of four scattered ones. */}
-      <div className="mt-3 grid grid-cols-[1fr_auto] gap-6 items-end">
+      <div className="mt-4 grid grid-cols-[1fr_auto] gap-6 items-end">
         <div className="min-w-0">
-          <div className="flex items-baseline gap-2 flex-wrap">
+          <div className="flex items-baseline gap-2.5 flex-wrap">
             <span
-              className="text-[30px] font-semibold tabular-nums tracking-tight leading-none"
+              className="text-[36px] font-semibold tabular-nums tracking-tight leading-none"
               style={{ color: gapColour }}
             >
               {positive ? "▲" : "▼"} {formatPercent(pulse.gap_pct, 1)}
             </span>
             {pulse.gap_gbp != null && (
               <span
-                className="text-[13px] font-semibold tabular-nums"
+                className="text-[14px] font-semibold tabular-nums"
                 style={{ color: gapColour }}
                 title="Approximate £ impact at the portfolio average price per hL"
               >
@@ -65,7 +70,7 @@ export function UkPulseHero({ pulse }: { pulse: Pulse }) {
           </div>
           {/* Supporting line — forecast & target sit together so the math is
               obvious without the previous "vs" word getting in the way. */}
-          <div className="mt-1.5 text-[12.5px] text-neutral-500 tabular-nums">
+          <div className="mt-2 text-[12.5px] text-neutral-500 tabular-nums">
             {formatHl(pulse.total_forecast_hl)} forecast
             <span className="mx-1.5 text-neutral-300">/</span>
             {formatHl(pulse.total_target_hl)} target
@@ -79,7 +84,7 @@ export function UkPulseHero({ pulse }: { pulse: Pulse }) {
 
         {pulse.n_skus_at_risk > 0 && (
           <div className="text-right shrink-0">
-            <div className="text-[20px] font-semibold tabular-nums text-neutral-900 leading-none">
+            <div className="text-[22px] font-semibold tabular-nums text-neutral-900 leading-none">
               {pulse.n_skus_at_risk}
             </div>
             <div className="mt-1 text-[10.5px] uppercase tracking-[0.16em] text-neutral-500 font-medium">

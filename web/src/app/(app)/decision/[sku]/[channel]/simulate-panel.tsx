@@ -9,7 +9,7 @@
 
 import { useMemo, useState } from "react"
 import { useSearchParams } from "next/navigation"
-import { AlertTriangle, Play, Sparkles } from "lucide-react"
+import { AlertTriangle, Play, Sliders, Sparkles } from "lucide-react"
 import useSWR from "swr"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
@@ -69,26 +69,43 @@ export function SimulatePanel({
     Number.isFinite(prefillDiscount) && prefillDiscount > 0 && prefillDiscount <= 30
       ? prefillDiscount
       : 10
+  // Action / effort prefills — needed so brand-focus / channel-focus /
+  // commercial-effort plays from /api/plays land correctly (their default
+  // action type is not "promo").
+  const prefillActionRaw = search.get("action") ?? ""
+  const prefillAction: ActionType = (ACTION_TYPES as readonly string[]).includes(prefillActionRaw)
+    ? (prefillActionRaw as ActionType)
+    : "promo"
+  const prefillEffortRaw = search.get("effort") ?? ""
+  const prefillEffort: EffortLevel = (EFFORT_LEVELS as readonly string[]).includes(prefillEffortRaw)
+    ? (prefillEffortRaw as EffortLevel)
+    : "medium"
   // True when the user arrived from a "Pick a play" recommendation card
   // (any prefill param present). Drives the recommendation banner + the
   // simplified default view.
   const fromRecommendation = prefillMonths.length > 0
     || search.get("promo") !== null
     || search.get("discount") !== null
+    || search.get("action") !== null
+    || search.get("effort") !== null
 
   const { data: forecast, error: forecastError } = useSWR<ForecastSeries>(
     `/api/forecast?sku=${encodeURIComponent(sku)}&sub_channel=${encodeURIComponent(sub_channel)}`,
     fetcher,
   )
 
-  const [actionType, setActionType] = useState<ActionType>("promo")
-  const [effortLevel, setEffortLevel] = useState<EffortLevel>("medium")
+  const [actionType, setActionType] = useState<ActionType>(prefillAction)
+  const [effortLevel, setEffortLevel] = useState<EffortLevel>(prefillEffort)
   const [discount, setDiscount] = useState(initialDiscount)
   const [promoType, setPromoType] = useState<PromoType>(prefillPromo)
   const [selectedMonths, setSelectedMonths] = useState<string[]>(prefillMonths)
   const [result, setResult] = useState<SimResult | null>(null)
   const [pending, setPending] = useState(false)
   const [runError, setRunError] = useState<string | null>(null)
+  // Controls panel is hidden by default when the user arrived from a Pick-a-
+  // play recommendation — the point of this view is to see the impact of
+  // that play, not to re-author it. "Tweak" toggles the full editor.
+  const [showTweak, setShowTweak] = useState(!fromRecommendation)
 
   const baselinePoints = useMemo(() => forecast?.points ?? [], [forecast?.points])
   const defaultMonth = useMemo(() => {
@@ -167,145 +184,156 @@ export function SimulatePanel({
     }
   }
 
-  return (
-    <section className="space-y-4">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="text-[10.5px] font-medium uppercase tracking-[0.18em] text-neutral-500">
-            Impact workspace
-          </div>
-          <h2 className="mt-1 font-serif text-[30px] leading-[1.1] tracking-[-0.01em] text-neutral-900">
-            Simulate this play
-          </h2>
-        </div>
-        <div className="text-[12px] text-neutral-500">
-          Baseline forecast vs promo scenario
-        </div>
-      </header>
+  const monthsText = activeMonths.length === 0
+    ? "—"
+    : activeMonths.length === 1
+      ? formatPeriodShort(activeMonths[0])
+      : `${activeMonths.length} months`
+  const prefillSummary = actionType === "promo"
+    ? `${promoLabel(promoType)} at ${discount}% · ${monthsText}`
+    : `${ACTION_META[actionType].title} (${effortLevel}) · ${monthsText}`
 
-      {/* Recommendation banner — only shown when arriving from a Pick-a-play
-          card. Tells the user "we've pre-filled this from the recommendation,
-          hit run or tweak below". Removes the guesswork of which controls
-          matter. */}
+  // Plain-English summary that replaces the backend's engineer-speak
+  // `result.notes` string. Built from the same SimulationResult fields the
+  // backend uses for the notes line, but framed for a Commercial Manager
+  // reader: what we tried, what the model expects, and the caveats.
+  const friendlyNotes = (() => {
+    if (!result || !resultHasPoints) return null
+    const what = actionType === "promo"
+      ? `a ${discount}% ${promoLabel(promoType).toLowerCase()}`
+      : `a ${effortLevel} ${ACTION_META[actionType].title.toLowerCase()}`
+    const liftPct = (result.applied_lift_pct * 100).toFixed(1)
+    const eventLine = result.event_boost_avg && result.event_boost_avg > 1.0
+      ? ` Event boost of +${((result.event_boost_avg - 1) * 100).toFixed(0)}% applied (high-traffic month).`
+      : ""
+    return `Running ${what} in ${monthsText} lifts volume by ${liftPct}% on top of the baseline forecast.${eventLine}`
+  })()
+
+  // Two layouts:
+  //  · Lean (prefilled, controls hidden): chart fills the row, prefill bar
+  //    has a "Tweak" affordance. Use min-h-screen-minus-header so the chart
+  //    actually fills the viewport instead of leaving dead space below.
+  //  · Editor (free-form, or after "Tweak"): the two-column chart + rail.
+  const showRail = showTweak
+
+  return (
+    <section className="flex flex-col gap-3 min-h-[calc(100vh-160px)]">
+      {/* Compact prefill bar — single line summary + Run + Tweak toggle.
+          Replaces the heavy black banner. The Tweak button is what lets
+          the user fall back to the full editor when they want to deviate
+          from the recommended play. */}
       {fromRecommendation && (
-        <div className="flex items-start gap-3 rounded-xl border border-neutral-900 bg-neutral-900 px-4 py-3 text-white">
-          <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-white/70" />
-          <div className="flex-1 min-w-0">
-            <div className="text-[10.5px] font-medium uppercase tracking-[0.16em] text-white/60">
-              Pre-filled from recommendation
-            </div>
-            <div className="mt-1 text-[13px] text-white/90 leading-snug">
-              {actionType === "promo"
-                ? `${promoLabel(promoType)} at ${discount}% across ${activeMonths.length || 0} month${activeMonths.length === 1 ? "" : "s"}`
-                : `${ACTION_META[actionType].title} (${effortLevel}) across ${activeMonths.length || 0} month${activeMonths.length === 1 ? "" : "s"}`
-              }
-              {" — hit run, or tweak the controls below."}
-            </div>
-          </div>
+        <div className="flex items-center gap-3 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-[12.5px]">
+          <Sparkles className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+          <span className="text-neutral-500">Recommended play:</span>
+          <span className="font-medium text-neutral-900 truncate">{prefillSummary}</span>
+          <Button
+            onClick={() => setShowTweak((v) => !v)}
+            size="sm"
+            variant="ghost"
+            className="ml-auto h-7 shrink-0 gap-1.5 text-[11.5px] text-neutral-600 hover:text-neutral-900"
+          >
+            <Sliders className="h-3 w-3" />
+            {showTweak ? "Hide controls" : "Tweak"}
+          </Button>
           <Button
             onClick={handleRun}
             disabled={activeMonths.length === 0 || pending || !baselinePoints.length}
             size="sm"
-            variant="secondary"
-            className="shrink-0 gap-1.5"
+            variant="outline"
+            className="h-7 shrink-0 gap-1.5 text-[11.5px]"
           >
             <Play className="h-3 w-3" />
-            {pending ? "Running…" : "Run as-is"}
+            {pending ? "Running…" : "Run"}
           </Button>
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-        <MetricCard
-          label="Current gap"
-          value={
-            resultHasPoints && result
-              ? formatHl(result.gap_before_hl)
-              : "—"
-          }
-          tone={result?.gap_before_hl && result.gap_before_hl < 0 ? "negative" : "neutral"}
-        />
-        <MetricCard
-          label="Selected action"
-          value={
-            actionType === "promo"
-              ? `${promoLabel(promoType)} · ${discount}%`
-              : `${ACTION_META[actionType].title} · ${effortLevel}`
-          }
-          sub={`${activeMonths.length || 0} month${activeMonths.length === 1 ? "" : "s"}`}
-        />
-        <MetricCard
-          label="Expected lift"
-          value={liftedHl == null ? "—" : `${liftedHl > 0 ? "+" : ""}${formatHl(liftedHl)}`}
-          tone={liftedHl == null ? "neutral" : liftedHl >= 0 ? "positive" : "negative"}
-          sub={gapClosedPct == null ? "Run scenario" : `${gapClosedPct.toFixed(1)}% gap closed`}
-        />
-        <MetricCard
-          label="Estimated cost"
-          value={result?.estimated_cost ? formatGBP(result.estimated_cost) : "—"}
-          sub={resultHasPoints && result ? `Gap after ${formatHl(result.gap_after_hl)}` : "After simulation"}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <section className="rounded-2xl border border-neutral-200 bg-white p-4">
-          <div className="mb-3 flex items-start justify-between gap-3">
-            <div>
-              <h3 className="text-[13px] font-semibold text-neutral-900">
-                Baseline vs simulated forecast
-              </h3>
-              <p className="mt-0.5 text-[12px] text-neutral-500">
-                Promo months are marked on the timeline.
-              </p>
-            </div>
+      <div className={`flex-1 grid grid-cols-1 gap-3 ${showRail ? "xl:grid-cols-[minmax(0,1fr)_320px]" : ""}`}>
+        <section className="rounded-2xl border border-neutral-200 bg-white p-4 flex flex-col">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="text-[13px] font-semibold text-neutral-900">
+              Impact on the forecast
+            </h3>
             {resultHasPoints && result && (
               <div
                 className={[
-                  "rounded-full px-2.5 py-1 text-[11.5px] font-medium tabular-nums",
+                  "rounded-full px-2.5 py-0.5 text-[11.5px] font-medium tabular-nums",
                   result.gap_closed_pct >= 0
                     ? "bg-[var(--positive)]/10 text-[var(--positive)]"
                     : "bg-[var(--negative)]/10 text-[var(--negative)]",
                 ].join(" ")}
               >
-                {result.gap_closed_pct >= 0 ? "+" : ""}
-                {(result.gap_closed_pct * 100).toFixed(1)}%
+                Closes {(result.gap_closed_pct * 100).toFixed(0)}% of the gap
               </div>
             )}
           </div>
 
-          {forecastError ? (
-            <Warning text="Could not load the baseline forecast." />
-          ) : chartSeries.length > 0 ? (
-            <SimulatorChart
-              series={chartSeries}
-              highlightedPeriods={activeMonths}
-              simulatedTone={simulatedTone}
+          {/* Inline KPI row — plain-English labels. Values stay blank until
+              the simulation runs; the strip sits inside the chart card so
+              empty state doesn't anchor the page with empty surfaces. */}
+          <dl className="mb-3 grid grid-cols-2 gap-x-6 gap-y-1 border-y border-neutral-100 py-2 sm:grid-cols-4">
+            <KpiInline
+              label="Below target"
+              value={resultHasPoints && result ? formatHl(Math.abs(result.gap_before_hl)) : "—"}
+              tone={result?.gap_before_hl && result.gap_before_hl < 0 ? "negative" : "neutral"}
             />
-          ) : (
-            <div className="flex h-[360px] items-center justify-center text-[13px] text-neutral-500">
-              Loading baseline forecast…
-            </div>
-          )}
+            <KpiInline
+              label="Extra volume"
+              value={liftedHl == null ? "—" : `${liftedHl > 0 ? "+" : ""}${formatHl(liftedHl)}`}
+              tone={liftedHl == null ? "neutral" : liftedHl >= 0 ? "positive" : "negative"}
+            />
+            <KpiInline
+              label="Still missing"
+              value={
+                resultHasPoints && result
+                  ? result.gap_after_hl >= 0
+                    ? "On target"
+                    : formatHl(Math.abs(result.gap_after_hl))
+                  : "—"
+              }
+            />
+            <KpiInline
+              label="Discount cost"
+              value={result?.estimated_cost ? formatGBP(result.estimated_cost) : "—"}
+            />
+          </dl>
+
+          <div className="flex-1 min-h-[320px]">
+            {forecastError ? (
+              <Warning text="Could not load the current forecast." />
+            ) : chartSeries.length > 0 ? (
+              <SimulatorChart
+                series={chartSeries}
+                highlightedPeriods={activeMonths}
+                simulatedTone={simulatedTone}
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center text-[13px] text-neutral-500">
+                Loading current forecast…
+              </div>
+            )}
+          </div>
 
           {warning && <Warning text={warning} className="mt-3" />}
-          {resultHasPoints && result?.notes && (
-            <p className="mt-3 border-t border-neutral-100 pt-3 text-[12px] leading-relaxed text-neutral-600">
-              {result.notes}
+          {friendlyNotes && (
+            <p className="mt-3 border-t border-neutral-100 pt-3 text-[12.5px] leading-relaxed text-neutral-600">
+              {friendlyNotes}
             </p>
           )}
         </section>
 
+        {showRail && (
         <aside className="rounded-2xl border border-neutral-200 bg-white p-4">
           <h3 className="text-[13px] font-semibold text-neutral-900">Scenario controls</h3>
-          <p className="mt-0.5 text-[12px] text-neutral-500">
-            Pick an action, the months, and the intensity.
-          </p>
 
-          <div className="mt-5 space-y-5">
-            {/* Action type — drives which secondary controls show below. */}
+          <div className="mt-4 space-y-4">
+            {/* Action — drives which secondary controls show below.
+                Hover for the per-action hint (kept as tooltip rather than
+                a paragraph that lives below the chips). */}
             <div>
               <label className="text-[10.5px] font-medium uppercase tracking-[0.14em] text-neutral-500">
-                Action type
+                Action
               </label>
               <div className="mt-2 grid grid-cols-2 gap-1.5">
                 {ACTION_TYPES.map((t) => {
@@ -331,14 +359,16 @@ export function SimulatePanel({
                   )
                 })}
               </div>
-              <p className="mt-1.5 text-[11px] text-neutral-500 leading-snug">
-                {ACTION_META[actionType].hint}
-              </p>
             </div>
 
             <div>
-              <label className="text-[10.5px] font-medium uppercase tracking-[0.14em] text-neutral-500">
-                Months
+              <label className="flex items-baseline justify-between text-[10.5px] font-medium uppercase tracking-[0.14em] text-neutral-500">
+                <span>Months</span>
+                {activeMonths.length > 0 && (
+                  <span className="font-normal tabular-nums text-neutral-400 normal-case tracking-normal">
+                    {activeMonths.length} selected
+                  </span>
+                )}
               </label>
               <div className="mt-2 grid grid-cols-3 gap-1.5">
                 {baselinePoints.map((p) => {
@@ -391,7 +421,7 @@ export function SimulatePanel({
 
                 <div>
                   <label className="text-[10.5px] font-medium uppercase tracking-[0.14em] text-neutral-500">
-                    Promo mechanic
+                    Promo type
                   </label>
                   <Select
                     value={promoType}
@@ -455,20 +485,19 @@ export function SimulatePanel({
             </Button>
           </div>
         </aside>
+        )}
       </div>
     </section>
   )
 }
 
-function MetricCard({
+function KpiInline({
   label,
   value,
-  sub,
   tone = "neutral",
 }: {
   label: string
   value: React.ReactNode
-  sub?: string
   tone?: "positive" | "negative" | "neutral"
 }) {
   const color =
@@ -478,14 +507,13 @@ function MetricCard({
         ? "text-[var(--negative)]"
         : "text-neutral-900"
   return (
-    <div className="rounded-2xl border border-neutral-200 bg-white px-4 py-3">
-      <div className="text-[10.5px] font-medium uppercase tracking-[0.16em] text-neutral-500">
+    <div className="min-w-0">
+      <dt className="text-[10.5px] font-medium uppercase tracking-[0.14em] text-neutral-500">
         {label}
-      </div>
-      <div className={`mt-1 truncate text-[20px] font-semibold tracking-tight tabular-nums ${color}`}>
+      </dt>
+      <dd className={`mt-0.5 truncate text-[15px] font-semibold tabular-nums ${color}`}>
         {value}
-      </div>
-      {sub && <div className="mt-0.5 truncate text-[11.5px] text-neutral-500">{sub}</div>}
+      </dd>
     </div>
   )
 }

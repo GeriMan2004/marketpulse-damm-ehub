@@ -102,49 +102,6 @@ def _align_targets(fc: pl.DataFrame, tg: pl.DataFrame) -> pl.DataFrame:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# /api/forecast/timeline — existing chart endpoint
-# ─────────────────────────────────────────────────────────────────────────────
-
-@router.get("/forecast/timeline")
-def forecast_timeline(
-    brand: str | None = Query(default=None),
-    sub_channel: str | None = Query(default=None),
-):
-    """Monthly aggregated forecast + target, one row per month."""
-    fc, tg, _ = _frames()
-    if brand:
-        fc = fc.filter(pl.col("brand") == brand)
-    if sub_channel:
-        fc = fc.filter(pl.col("sub_channel") == sub_channel)
-    if len(fc) == 0:
-        return []
-    tg = _align_targets(fc, tg)
-
-    fc_agg = (
-        fc.group_by("date")
-        .agg(
-            point=pl.col("Hl_hat_p50").sum(),
-            lo80=pl.col("Hl_hat_p10_cal").sum() if "Hl_hat_p10_cal" in fc.columns else pl.col("Hl_hat_p10").sum(),
-            hi80=pl.col("Hl_hat_p90_cal").sum() if "Hl_hat_p90_cal" in fc.columns else pl.col("Hl_hat_p90").sum(),
-        )
-    )
-    tg_agg = tg.group_by("date").agg(target=pl.col("target_hl").sum())
-    merged = fc_agg.join(tg_agg, on="date", how="left").sort("date")
-
-    return [
-        {
-            "period": r["date"].strftime("%b.%y"),
-            "period_start": r["date"].isoformat(),
-            "point": float(r["point"]),
-            "lo80": float(r["lo80"]),
-            "hi80": float(r["hi80"]),
-            "target": float(r["target"]) if r["target"] is not None else None,
-        }
-        for r in merged.iter_rows(named=True)
-    ]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # /api/forecast/by-sub-channel — period-aware
 # ─────────────────────────────────────────────────────────────────────────────
 

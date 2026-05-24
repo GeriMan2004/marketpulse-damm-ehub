@@ -24,23 +24,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/kpis": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Kpis */
-        get: operations["get_kpis_api_kpis_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/forecast": {
         parameters: {
             query?: never;
@@ -50,23 +33,6 @@ export interface paths {
         };
         /** Get Forecast */
         get: operations["get_forecast_api_forecast_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/forecast/quality": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Forecast Quality */
-        get: operations["forecast_quality_api_forecast_quality_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -166,37 +132,17 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/recommend": {
+    "/api/plays": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Get Plays */
+        get: operations["get_plays_api_plays_get"];
         put?: never;
-        /** Post Recommend */
-        post: operations["post_recommend_api_recommend_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/chat": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Chat
-         * @description Mock streaming response. Real impl runs the smolagents CodeAgent on `fast` profile.
-         */
-        post: operations["chat_api_chat_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -252,43 +198,6 @@ export interface paths {
          * @description Preview an allowlisted local snapshot Parquet file.
          */
         get: operations["preview_parquet_api_debug_parquet__name__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/anomalies": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Anomalies */
-        get: operations["get_anomalies_api_anomalies_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/forecast/timeline": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Forecast Timeline
-         * @description Monthly aggregated forecast + target, one row per month.
-         */
-        get: operations["forecast_timeline_api_forecast_timeline_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -508,23 +417,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** AnomalyEvent */
-        AnomalyEvent: {
-            /** Sku */
-            sku: string;
-            /** Sub Channel */
-            sub_channel: string;
-            /** Period */
-            period: string;
-            /** Actual Hl */
-            actual_hl: number;
-            /** Expected Hl */
-            expected_hl: number;
-            /** Z Score */
-            z_score: number;
-            /** Candidate Cause */
-            candidate_cause: string;
-        };
         /** BrandRollup */
         BrandRollup: {
             /** Brand */
@@ -657,27 +549,6 @@ export interface components {
              * @enum {string}
              */
             importance: "high" | "medium" | "low";
-        };
-        /** ChatMessage */
-        ChatMessage: {
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "system" | "user" | "assistant" | "tool";
-            /** Content */
-            content: string;
-            /** Tool Calls */
-            tool_calls?: {
-                [key: string]: unknown;
-            }[];
-        };
-        /** ChatRequest */
-        ChatRequest: {
-            /** Session Id */
-            session_id?: string | null;
-            /** Messages */
-            messages: components["schemas"]["ChatMessage"][];
         };
         /** Driver */
         Driver: {
@@ -848,26 +719,6 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
-        /** KpiSummary */
-        KpiSummary: {
-            /** Total Forecast Hl */
-            total_forecast_hl: number;
-            /** Total Budget Hl */
-            total_budget_hl: number;
-            /** Gap Hl */
-            gap_hl: number;
-            /** Gap Pct */
-            gap_pct: number;
-            /** On Track Skus */
-            on_track_skus: number;
-            /** Off Track Skus */
-            off_track_skus: number;
-            /** Period Range */
-            period_range: [
-                string,
-                string
-            ];
-        };
         /** MetaResponse */
         MetaResponse: {
             /** Brands */
@@ -977,6 +828,76 @@ export interface components {
             /** Events */
             events: components["schemas"]["CalendarEvent"][];
         };
+        /**
+         * Play
+         * @description One suggested play, grounded in a specific data source.
+         *
+         *     Each play tells the user WHAT to do (`title` + `summary`), WHY it fits
+         *     THIS SKU × channel × period (`why` + `why_source`), and WHICH controls
+         *     to pre-fill into the simulator (`action_type` + the optional fields).
+         *
+         *     `expected_gap_closed_pct` is a deterministic estimate so the UI can
+         *     rank cards without round-tripping through the LLM / simulator. The
+         *     user still hits Run in the simulator to see the calibrated number.
+         */
+        Play: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "repeat" | "event" | "gap-closer";
+            /**
+             * Title
+             * @description Imperative one-liner, max ~50 chars
+             */
+            title: string;
+            /**
+             * Summary
+             * @description What this play does, ~120 chars
+             */
+            summary: string;
+            /**
+             * Why
+             * @description The grounding fact in plain English
+             */
+            why: string;
+            /**
+             * Why Source
+             * @description Which signal/dataset this came from
+             */
+            why_source: string;
+            /**
+             * Months
+             * @description Pre-fill months e.g. ['Jul.26']
+             */
+            months?: string[];
+            /**
+             * Action Type
+             * @enum {string}
+             */
+            action_type: "promo" | "brand-focus" | "channel-focus" | "commercial-effort";
+            /** Promo Type */
+            promo_type?: string | null;
+            /** Discount Pct */
+            discount_pct?: number | null;
+            /** Effort Level */
+            effort_level?: ("low" | "medium" | "high") | null;
+            /** Expected Gap Closed Pct */
+            expected_gap_closed_pct?: number | null;
+        };
+        /** PlaysResponse */
+        PlaysResponse: {
+            /** Sku */
+            sku: string;
+            /** Sub Channel */
+            sub_channel: string;
+            /** Period */
+            period: string | null;
+            /** Gap Hl */
+            gap_hl: number | null;
+            /** Plays */
+            plays: components["schemas"]["Play"][];
+        };
         /** PromoROI */
         PromoROI: {
             /** Promo Type */
@@ -1056,102 +977,6 @@ export interface components {
             n_skus_at_risk: number;
             worst_brand?: components["schemas"]["WorstSlice"] | null;
             worst_channel?: components["schemas"]["WorstSlice"] | null;
-        };
-        /** QualityPoint */
-        QualityPoint: {
-            /** Period */
-            period: string;
-            /** Predicted Hl */
-            predicted_hl: number;
-            /** Actual Hl */
-            actual_hl: number;
-            /** Error Pct */
-            error_pct: number;
-        };
-        /** QualityResponse */
-        QualityResponse: {
-            /** Points */
-            points?: components["schemas"]["QualityPoint"][];
-            /**
-             * Mape Pct
-             * @default 0
-             */
-            mape_pct: number;
-            /**
-             * Mape Recent Pct
-             * @default 0
-             */
-            mape_recent_pct: number;
-            /**
-             * N Points
-             * @default 0
-             */
-            n_points: number;
-        };
-        /** RecommendRequest */
-        RecommendRequest: {
-            /** Sku */
-            sku: string;
-            /** Sub Channel */
-            sub_channel: string;
-            /** Period */
-            period: string;
-        };
-        /** RecommendationAction */
-        RecommendationAction: {
-            /** Action */
-            action: string;
-            /** Target Sku */
-            target_sku: string;
-            /** Target Sub Channel */
-            target_sub_channel: string;
-            /** Target Months */
-            target_months: string[];
-            /** Expected Lift Hl */
-            expected_lift_hl: number;
-            /** Expected Gap Closed Pct */
-            expected_gap_closed_pct: number;
-            /** Estimated Cost */
-            estimated_cost?: number | null;
-            /**
-             * Confidence
-             * @default medium
-             * @enum {string}
-             */
-            confidence: "low" | "medium" | "high";
-            /** Evidence */
-            evidence?: string[];
-        };
-        /** RecommendationResponse */
-        RecommendationResponse: {
-            /** Sku */
-            sku: string;
-            /** Sub Channel */
-            sub_channel: string;
-            /** Period */
-            period: string;
-            /** Current Gap Hl */
-            current_gap_hl: number;
-            /** Current Gap Pct */
-            current_gap_pct: number;
-            /** Scenarios */
-            scenarios: components["schemas"]["RecommendationScenario"][];
-        };
-        /** RecommendationScenario */
-        RecommendationScenario: {
-            /**
-             * Label
-             * @enum {string}
-             */
-            label: "conservative" | "balanced" | "aggressive";
-            /** Headline */
-            headline: string;
-            /** Actions */
-            actions?: components["schemas"]["RecommendationAction"][];
-            /** Total Expected Gap Closed Pct */
-            total_expected_gap_closed_pct: number;
-            /** Risk Notes */
-            risk_notes: string;
         };
         /**
          * RefreshResult
@@ -1354,40 +1179,6 @@ export interface operations {
             };
         };
     };
-    get_kpis_api_kpis_get: {
-        parameters: {
-            query?: {
-                brand?: string | null;
-                sub_channel?: string | null;
-                from?: string | null;
-                to?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["KpiSummary"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_forecast_api_forecast_get: {
         parameters: {
             query: {
@@ -1409,39 +1200,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ForecastSeries"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    forecast_quality_api_forecast_quality_get: {
-        parameters: {
-            query: {
-                sku: string;
-                /** @description sub_channel — kept short for URL clarity */
-                channel: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["QualityResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1623,18 +1381,18 @@ export interface operations {
             };
         };
     };
-    post_recommend_api_recommend_post: {
+    get_plays_api_plays_get: {
         parameters: {
-            query?: never;
+            query: {
+                sku: string;
+                sub_channel: string;
+                period?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RecommendRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -1642,40 +1400,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RecommendationResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    chat_api_chat_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ChatRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PlaysResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1769,72 +1494,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_anomalies_api_anomalies_get: {
-        parameters: {
-            query?: {
-                sku?: string | null;
-                brand?: string | null;
-                sub_channel?: string | null;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AnomalyEvent"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    forecast_timeline_api_forecast_timeline_get: {
-        parameters: {
-            query?: {
-                brand?: string | null;
-                sub_channel?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

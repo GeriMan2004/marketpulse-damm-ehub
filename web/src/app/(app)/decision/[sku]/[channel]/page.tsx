@@ -1,13 +1,12 @@
 /**
  * Decision page — one SKU × sub-channel.
  *
- * Three views share the same route, switched by `?tab=`:
- *   - default (Overview): KPI strip, focused chart, drivers, recommended action
- *   - ?tab=simulate     : reached via the Overview's "Try this play" CTA
- *   - ?tab=options      : reached via "Compare alternatives" link
+ * Two views share the same route, switched by `?tab=`:
+ *   - default (Overview): chart + supporting cards + 3 signal-grounded plays
+ *   - ?tab=simulate     : reached via a "Pick a play" card
  *
- * No tab strip — the flow is linear (problem → plan → simulate) and the back
- * link in each non-default view replaces the tab bar.
+ * No tab strip — the flow is linear (diagnose → simulate) and the back link
+ * in each non-default view replaces a tab bar.
  */
 
 import { Suspense } from "react"
@@ -19,7 +18,6 @@ import { skuLabel, channelLabel } from "@/lib/meta"
 import { formatGBP, formatPeriod, gapColor } from "@/lib/format"
 import type { components } from "@/lib/api.gen"
 import { DiagnosisPanel } from "./diagnosis-panel"
-import { OptionsPanel } from "./options-panel"
 import { SimulatePanel } from "./simulate-panel"
 
 type Meta = components["schemas"]["MetaResponse"]
@@ -49,7 +47,7 @@ export default async function DecisionPage({
     : matchingGaps[0]
   const targetPeriod = currentGap?.period ?? period
 
-  const VALID_TABS = ["diagnosis", "options", "simulate"] as const
+  const VALID_TABS = ["diagnosis", "simulate"] as const
   type TabSlot = (typeof VALID_TABS)[number]
   const activeTab: TabSlot = (VALID_TABS as readonly string[]).includes(tab ?? "")
     ? (tab as TabSlot)
@@ -110,18 +108,7 @@ export default async function DecisionPage({
             />
           </Suspense>
         ) : (
-          <>
-            {activeTab === "options" ? (
-              <Suspense fallback={<PanelSkeleton />}>
-                <h2 className="font-serif text-[28px] leading-[1.15] tracking-[-0.01em] text-neutral-900 mb-8">
-                  Compare alternatives
-                </h2>
-                <OptionsPanel sku={sku} sub_channel={sub_channel} period={targetPeriod} />
-              </Suspense>
-            ) : (
-              <SimulatePanel sku={sku} sub_channel={sub_channel} period={targetPeriod} />
-            )}
-          </>
+          <SimulatePanel sku={sku} sub_channel={sub_channel} period={targetPeriod} />
         )}
       </PageWidthWrapper>
     </PageContent>

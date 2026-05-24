@@ -12,21 +12,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import (
     aggregates,
-    anomalies,
     brief,
-    chat,
     debug_data,
     drivers,
     explain_view,
     external,
     forecast,
     gap,
-    kpis,
     meta,
     news,
+    plays,
     pricing,
     promos,
-    recommend,
     simulate,
 )
 
@@ -56,17 +53,14 @@ app.add_middleware(
 
 # Routers (one per endpoint family — keeps the file map clean)
 app.include_router(meta.router)
-app.include_router(kpis.router)
 app.include_router(forecast.router)
 app.include_router(gap.router)
 app.include_router(drivers.router)
 app.include_router(simulate.router)
 app.include_router(promos.router)
-app.include_router(recommend.router)
-app.include_router(chat.router)
+app.include_router(plays.router)
 app.include_router(explain_view.router)
 app.include_router(debug_data.router)
-app.include_router(anomalies.router)
 app.include_router(aggregates.router)
 app.include_router(news.router)
 app.include_router(brief.router)
