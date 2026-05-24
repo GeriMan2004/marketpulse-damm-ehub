@@ -76,8 +76,14 @@ export default async function BriefPage({
     }),
   )
 
-  // 4. Resolve the upcoming call for this customer (for the meeting date).
-  const call = UPCOMING_CALLS.find((c) => c.customer === customer)
+  // 4. Resolve the soonest UPCOMING call for this customer (the calls list
+  //    also carries past meetings for the calendar's "done" chips — the
+  //    backend's BriefRequest validates meeting_in_days ≥ 0, so a naive
+  //    .find() that lands on a past meeting would 422 the request).
+  const call =
+    UPCOMING_CALLS
+      .filter((c) => c.customer === customer && c.days_from_now >= 0)
+      .sort((a, b) => a.days_from_now - b.days_from_now)[0] ?? null
   const meetingDate = call ? new Date(call.date_iso) : new Date()
   const weekday = WEEKDAYS[meetingDate.getDay()]
   const daysAhead = call?.days_from_now ?? 0

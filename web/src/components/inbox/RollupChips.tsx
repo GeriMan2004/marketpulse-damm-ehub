@@ -36,7 +36,7 @@ export function RollupChips({
       {items.length === 0 ? (
         <p className="text-[12px] text-neutral-500">{emptyHint ?? "—"}</p>
       ) : (
-        <div className="flex gap-2.5 pl-4 -mr-3 lg:-mr-6 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+        <div className="flex gap-2.5 pl-4 pr-4 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
           {items.map((it) => (
             <Chip key={it.label} {...it} />
           ))}

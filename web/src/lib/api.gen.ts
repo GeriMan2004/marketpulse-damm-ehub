@@ -1141,8 +1141,24 @@ export interface components {
             gap_after_hl: number;
             /** Gap Closed Pct */
             gap_closed_pct: number;
+            /**
+             * Lift Hl
+             * @default 0
+             */
+            lift_hl: number;
+            /** Lift Gbp */
+            lift_gbp?: number | null;
             /** Estimated Cost */
             estimated_cost?: number | null;
+            /** Net Gbp */
+            net_gbp?: number | null;
+            /** Gbp Per Hl */
+            gbp_per_hl?: number | null;
+            /**
+             * Applied Lift Pct
+             * @default 0
+             */
+            applied_lift_pct: number;
             /** Notes */
             notes: string;
         };

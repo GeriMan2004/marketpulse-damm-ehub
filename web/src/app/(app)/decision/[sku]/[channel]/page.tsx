@@ -18,7 +18,7 @@ import { PageWidthWrapper } from "@/components/shell/PageWidthWrapper"
 import { Skeleton } from "@/components/ui/skeleton"
 import { serverFetch } from "@/lib/api"
 import { skuLabel, channelLabel } from "@/lib/meta"
-import { formatPeriod } from "@/lib/format"
+import { formatGBP, formatPercent, formatPeriod, gapColor } from "@/lib/format"
 import type { components } from "@/lib/api.gen"
 import { DiagnosisPanel } from "./diagnosis-panel"
 import { OptionsPanel } from "./options-panel"
@@ -64,14 +64,27 @@ export default async function DecisionPage({
   const subhead =
     `${channelLabel(meta, sub_channel)} · ${targetPeriod ? formatPeriod(targetPeriod) : "—"}`
 
-  // Compose the header title so the channel + period live inline next to the
-  // SKU name. Pushes the panel content up and frees a row of vertical space.
+  // Compose the header title: SKU name + channel/period + headline gap
+  // (replaces the dedicated KPI strip that used to sit below the chart).
   const headerTitle = (
     <span className="flex items-baseline gap-2 min-w-0">
       <span className="truncate">{skuLabel(meta, sku)}</span>
       <span className="hidden sm:inline text-[13px] font-normal text-neutral-500 truncate">
         {subhead}
       </span>
+      {currentGap && (
+        <span
+          className="hidden md:inline text-[13px] font-semibold tabular-nums shrink-0"
+          style={{ color: gapColor(currentGap.gap_pct) }}
+        >
+          · {formatPercent(currentGap.gap_pct, 1)}
+          {currentGap.gap_gbp != null && (
+            <span className="ml-1 font-normal text-neutral-500">
+              ≈ {formatGBP(currentGap.gap_gbp)}
+            </span>
+          )}
+        </span>
+      )}
     </span>
   )
 
