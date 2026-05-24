@@ -17,6 +17,7 @@ import { serverFetch } from "@/lib/api"
 import { skuLabel } from "@/lib/meta"
 import { formatGBP, gapColor } from "@/lib/format"
 import type { components } from "@/lib/api.gen"
+import { asCustomer, CUSTOMER_LABELS, gapMatchesCustomer } from "@/lib/calls"
 import { DiagnosisPanel } from "./diagnosis-panel"
 import { SimulatePanel } from "./simulate-panel"
 
@@ -28,20 +29,29 @@ export default async function DecisionPage({
   searchParams,
 }: {
   params: Promise<{ sku: string; channel: string }>
-  searchParams: Promise<{ period?: string; tab?: string; granularity?: string }>
+  searchParams: Promise<{ period?: string; tab?: string; granularity?: string; customer?: string }>
 }) {
   const { sku: skuRaw, channel: channelRaw } = await params
-  const { period, tab, granularity: granRaw } = await searchParams
+  const { period, tab, granularity: granRaw, customer: customerRaw } = await searchParams
   const granularity: "month" | "week" = granRaw === "week" ? "week" : "month"
   const sku = decodeURIComponent(skuRaw)
   const sub_channel = decodeURIComponent(channelRaw)
+  const customer = asCustomer(customerRaw)
 
+  // Match the home-page query so the per-customer arithmetic lines up
+  // (default `/api/gap` caps at 50 rows + min_quality=0.25 and would
+  // silently drop months the drawer counted).
   const [meta, gaps] = await Promise.all([
     serverFetch<Meta>("/api/meta"),
-    serverFetch<GapItem[]>("/api/gap"),
+    serverFetch<GapItem[]>("/api/gap?limit=2000&min_quality=0"),
   ])
 
-  const matchingGaps = gaps.filter((g) => g.sku === sku && g.sub_channel === sub_channel)
+  // Scope to the SKU × channel. If a customer is in the URL, also restrict
+  // to the months that customer "owns" — same predicate the drawer uses,
+  // so the chip total exactly matches the card the user clicked.
+  const matchingGaps = gaps
+    .filter((g) => g.sku === sku && g.sub_channel === sub_channel)
+    .filter((g) => (customer ? gapMatchesCustomer(g, customer) : true))
   const currentGap = period
     ? matchingGaps.find((g) => g.period === period) ?? matchingGaps[0]
     : matchingGaps[0]
@@ -53,14 +63,26 @@ export default async function DecisionPage({
     ? (tab as TabSlot)
     : "diagnosis"
 
-  // The chart shows the channel + period anyway; the header keeps just
-  // the SKU name + the headline gap chip. Channel is implicit in the URL
-  // path and shown again on the chart card. Less is more.
-  const monthsAtRisk = matchingGaps.length
-  const worstGap = matchingGaps.length > 0
-    ? matchingGaps.reduce((a, b) => (a.gap_pct < b.gap_pct ? a : b))
+  // Header chip is scoped to the *direction* of the period the user
+  // clicked through on — a SKU can be ahead in some months and behind
+  // in others; summing across both nets to a number that contradicts
+  // the home-page card (which is also direction-scoped). If we have no
+  // currentGap (deep link from elsewhere), fall back to the worst miss
+  // so the chip stays informative.
+  const headerDirection: "win" | "loss" =
+    currentGap && currentGap.gap_hl > 0 ? "win" : "loss"
+  const directionGaps = matchingGaps.filter((g) =>
+    headerDirection === "win" ? g.gap_hl > 0 : g.gap_hl < 0,
+  )
+  const monthsInDirection = directionGaps.length
+  const extremeGap = directionGaps.length > 0
+    ? directionGaps.reduce((a, b) =>
+        headerDirection === "win"
+          ? (a.gap_pct > b.gap_pct ? a : b)
+          : (a.gap_pct < b.gap_pct ? a : b),
+      )
     : null
-  const totalGapGbp = matchingGaps.reduce<number | null>((s, g) => {
+  const totalGapGbp = directionGaps.reduce<number | null>((s, g) => {
     if (g.gap_gbp == null) return s
     return (s ?? 0) + g.gap_gbp
   }, null)
@@ -68,14 +90,16 @@ export default async function DecisionPage({
   const headerTitle = (
     <span className="flex items-baseline gap-2 min-w-0">
       <span className="truncate">{skuLabel(meta, sku)}</span>
-      {monthsAtRisk > 0 && worstGap && totalGapGbp != null && (
+      {monthsInDirection > 0 && extremeGap && totalGapGbp != null && (
         <span
           className="hidden md:inline text-[13px] font-medium tabular-nums shrink-0"
-          style={{ color: gapColor(worstGap.gap_pct) }}
+          style={{ color: gapColor(extremeGap.gap_pct) }}
         >
-          {formatGBP(totalGapGbp)}
+          {headerDirection === "win" ? "+" : "−"}
+          {formatGBP(Math.abs(totalGapGbp))}
           <span className="ml-1 font-normal text-neutral-400">
-            · {monthsAtRisk}mo at risk
+            · {monthsInDirection}mo {headerDirection === "win" ? "ahead" : "at risk"}
+            {customer ? ` · ${CUSTOMER_LABELS[customer]}` : ""}
           </span>
         </span>
       )}

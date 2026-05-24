@@ -43,6 +43,7 @@ type Meta = components["schemas"]["MetaResponse"]
 type AtRiskAggregateRow = {
   sku: string
   sub_channel: string
+  customer: Customer        // who the drawer was opened for — threaded into the deep link
   worst: GapItem            // worst-gap month (for click destination + label)
   monthsAtRisk: number      // how many months in the horizon are negative
   totalGapHl: number        // sum of gap_hl across those months
@@ -132,6 +133,7 @@ async function Inbox({ customer }: { customer: Customer | null }) {
         bySku.set(key, {
           sku: g.sku,
           sub_channel: g.sub_channel,
+          customer,
           worst: g,
           monthsAtRisk: 1,
           totalGapHl: g.gap_hl,
@@ -345,11 +347,13 @@ function InboxRow({
   // The row's pill colour tracks the *most-extreme month* tone — for
   // losses that's the deepest miss; for wins it's the biggest beat.
   const tone = gapTone(row.worst.gap_pct)
-  // Deep-link to the most-extreme month — the decision page lands on
-  // the most informative period for this SKU × channel.
+  // Deep-link to the most-extreme month *for the customer in context*.
+  // Carrying `customer=` through means the decision page can scope its
+  // header chip to the same slice the home drawer was showing — without
+  // it, the chip sums the whole portfolio and won't match the drawer.
   const href = `/decision/${encodeURIComponent(row.sku)}/${encodeURIComponent(
     row.sub_channel,
-  )}?period=${encodeURIComponent(row.worst.period)}`
+  )}?period=${encodeURIComponent(row.worst.period)}&customer=${encodeURIComponent(row.customer)}`
 
   // Subtitle copy varies by direction: "at risk" / "worst MMM" for
   // losses, "ahead" / "best MMM" for wins. Singular/plural is

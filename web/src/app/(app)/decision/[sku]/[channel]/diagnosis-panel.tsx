@@ -208,18 +208,14 @@ export async function DiagnosisPanel({
         )}
       </section>
 
-      {/* Supporting context row — Recent performance, Planned promos,
-          External context, Why this forecast. Four equal-height columns
-          on wide screens, 2×2 on medium, stacked on mobile. */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch">
+      {/* Supporting context row — Recent performance, External context,
+          Why this forecast. Three equal-height columns on wide screens,
+          2-up on medium, stacked on mobile. Planned promos was removed
+          because the same windows are already shaded on the chart. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-stretch">
         {currentGap && currentGap.history_hl && currentGap.history_hl.length > 0 && (
           <RecentPerformanceCard history={currentGap.history_hl} />
         )}
-
-        <PromosInPeriodCard
-          windows={forecast.promo_windows ?? []}
-          targetPeriod={targetPeriod}
-        />
 
         <ExternalContextCard
           signals={
@@ -489,67 +485,6 @@ function RecentPerformanceCard({ history }: { history: number[] }) {
   )
 }
 
-type PromoWindow = components["schemas"]["PromoWindow"]
-
-/**
- * Promos in this period — surfaces any planned trade activity that
- * overlaps the chart window. Sourced from the same /api/forecast call
- * that drives the chart's promo bands, just rendered as a readable list.
- */
-function PromosInPeriodCard({
-  windows,
-  targetPeriod,
-}: {
-  windows: PromoWindow[]
-  targetPeriod: string | undefined
-}) {
-  const sorted = [...windows].sort((a, b) =>
-    a.period_start.localeCompare(b.period_start),
-  )
-  const top = sorted.slice(0, 3)
-  const isEmpty = sorted.length === 0
-  return (
-    <section className="h-full rounded-2xl border border-neutral-200 bg-white">
-      <header className="px-4 pt-3 pb-2">
-        <h3 className="text-[13px] font-semibold text-neutral-900">Planned promos</h3>
-        <p className="text-[12px] text-neutral-500 mt-0.5">
-          {isEmpty
-            ? `No trade activity planned${targetPeriod ? ` around ${humanPeriod(targetPeriod)}` : ""}.`
-            : `Trade activity in the chart window${targetPeriod ? ` around ${humanPeriod(targetPeriod)}` : ""}.`}
-        </p>
-      </header>
-      {isEmpty ? (
-        <div className="px-4 pb-3 text-[12px] text-neutral-500 leading-relaxed">
-          Nothing in the trade plan touches this SKU and channel right now —
-          a play here would be a fresh decision rather than a tweak to an
-          existing promo.
-        </div>
-      ) : (
-        <ul className="px-4 pb-3 space-y-1.5">
-          {top.map((w, i) => (
-            <li key={i} className="flex items-center gap-3 text-[12.5px]">
-              <span className="shrink-0 h-2 w-2 rounded-full bg-[color:var(--positive)]" />
-              <span className="font-medium text-neutral-900 truncate">{w.label}</span>
-              <span className="ml-auto text-[11px] text-neutral-500 tabular-nums shrink-0">
-                {shortDate(w.period_start)} – {shortDate(w.period_end)}
-              </span>
-            </li>
-          ))}
-          {sorted.length > top.length && (
-            <li className="text-[11px] text-neutral-400">
-              +{sorted.length - top.length} more on the chart
-            </li>
-          )}
-        </ul>
-      )}
-    </section>
-  )
-}
-
-function shortDate(iso: string): string {
-  const d = new Date(iso)
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })
-}
 
 /**
  * Slice the forecast points to a window centred on the target period.

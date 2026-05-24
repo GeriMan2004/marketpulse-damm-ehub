@@ -75,6 +75,15 @@ PROMO_ROI = ROOT / "app" / "data" / "snapshots" / "promo_roi.parquet"
 # Diminishing-returns scale for promo lift.
 LIFT_SCALE = 15.0
 
+# Share of forecasted volume that actually moves through the promoted
+# mechanic. Multi-buys and price-cuts don't apply to every shopper —
+# baseline (non-promo) buyers are still in the volume, and not every
+# shopper at the fixture takes the offer. Industry rule-of-thumb for UK
+# grocery trade promos is 45–65% participation; we use 55%. Cost
+# without this factor is wildly pessimistic and makes every promo look
+# unprofitable.
+PROMO_PARTICIPATION_RATE = 0.55
+
 # Multiplier applied to the historical-mean promo lift to *lower* the
 # baseline. The headroom is then filled back in by the event-importance
 # boost in HIGH months — net effect: events drive the variance, not the
@@ -257,7 +266,12 @@ def simulate(req: SimulationRequest) -> SimulationResult:
     if rate is not None:
         lift_gbp = lift_hl * rate
         if req.action_type == "promo":
-            cost_gbp = simulated_hl * (req.discount_pct / 100.0) * rate
+            cost_gbp = (
+                simulated_hl
+                * (req.discount_pct / 100.0)
+                * PROMO_PARTICIPATION_RATE
+                * rate
+            )
             net_gbp = lift_gbp - cost_gbp
         else:
             # Non-promo actions don't carry a discount give-away. Cost is

@@ -221,8 +221,24 @@ def external_signals_timeline(
     if not available:
         return ExternalSignalsTimeline(sku=sku, sub_channel=sub_channel, months=[])
 
-    start = _parse_period(period_from) or available[0]
-    end = _parse_period(period_to) or date_t(start.year + 1, start.month, 1)
+    # Default window covers the forecast horizon, not just the actuals
+    # window. The forecast lives ~9 months past the last actual; without
+    # a wider default, callers asking for Sep.26 etc. get an empty list
+    # and the Decision page's External-context card shows "No signals".
+    # We anchor on the latest actual and expand 6 months back / 18 ahead
+    # so both the recent past and the full forecast horizon are covered.
+    last_actual = available[-1]
+    if last_actual.month > 6:
+        default_start = date_t(last_actual.year, last_actual.month - 6, 1)
+    else:
+        default_start = date_t(last_actual.year - 1, last_actual.month + 6, 1)
+    end_month = last_actual.month + 18
+    end_year = last_actual.year + (end_month - 1) // 12
+    end_month = ((end_month - 1) % 12) + 1
+    default_end = date_t(end_year, end_month, 1)
+
+    start = _parse_period(period_from) or default_start
+    end = _parse_period(period_to) or default_end
 
     months: list[PeriodSignals] = []
     for m in _month_starts(start, end):
