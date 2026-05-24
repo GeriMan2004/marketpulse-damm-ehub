@@ -10,9 +10,7 @@
  * link in each non-default view replaces the tab bar.
  */
 
-import Link from "next/link"
 import { Suspense } from "react"
-import { ArrowLeft } from "lucide-react"
 import { PageContent } from "@/components/shell/PageContent"
 import { PageWidthWrapper } from "@/components/shell/PageWidthWrapper"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -57,10 +55,6 @@ export default async function DecisionPage({
     ? (tab as TabSlot)
     : "diagnosis"
 
-  const backToOverviewHref =
-    `/decision/${encodeURIComponent(sku)}/${encodeURIComponent(sub_channel)}` +
-    (targetPeriod ? `?period=${encodeURIComponent(targetPeriod)}` : "")
-
   const subhead =
     `${channelLabel(meta, sub_channel)} · ${targetPeriod ? formatPeriod(targetPeriod) : "—"}`
 
@@ -103,22 +97,15 @@ export default async function DecisionPage({
           </Suspense>
         ) : (
           <>
-            <Link
-              href={backToOverviewHref as Parameters<typeof Link>[0]["href"]}
-              className="inline-flex items-center gap-1.5 text-[13px] text-neutral-500 hover:text-neutral-900 transition-colors"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Back to overview
-            </Link>
-            <h2 className="font-serif text-[28px] leading-[1.15] tracking-[-0.01em] text-neutral-900 mt-3 mb-8">
-              {activeTab === "simulate" ? "Simulate this play" : "Compare alternatives"}
-            </h2>
             {activeTab === "options" ? (
               <Suspense fallback={<PanelSkeleton />}>
+                <h2 className="font-serif text-[28px] leading-[1.15] tracking-[-0.01em] text-neutral-900 mb-8">
+                  Compare alternatives
+                </h2>
                 <OptionsPanel sku={sku} sub_channel={sub_channel} period={targetPeriod} />
               </Suspense>
             ) : (
-              <SimulatePanel sku={sku} sub_channel={sub_channel} />
+              <SimulatePanel sku={sku} sub_channel={sub_channel} period={targetPeriod} />
             )}
           </>
         )}
