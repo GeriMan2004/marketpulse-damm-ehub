@@ -227,10 +227,14 @@ async function Inbox({ customer }: { customer: Customer | null }) {
             </div>
           ) : (
             <div className="flex flex-col gap-6">
+              {/* Top 3 each side — keeps the drawer scannable for a
+                  pre-call read. Full list is still in the data; tooltip
+                  on the "+N more" line surfaces the count. */}
               <DrawerSection
                 label="Behind plan"
                 hint="Lead with these — they need an ask"
-                rows={negatives}
+                rows={negatives.slice(0, 3)}
+                hiddenCount={Math.max(0, negatives.length - 3)}
                 direction="loss"
                 meta={meta}
                 emptyHint="Nothing behind plan — they're growing across the basket."
@@ -238,7 +242,8 @@ async function Inbox({ customer }: { customer: Customer | null }) {
               <DrawerSection
                 label="Ahead of plan"
                 hint="Talking points — acknowledge before pivoting to misses"
-                rows={positives}
+                rows={positives.slice(0, 3)}
+                hiddenCount={Math.max(0, positives.length - 3)}
                 direction="win"
                 meta={meta}
                 emptyHint="No wins to acknowledge — every SKU is below YoY."
@@ -271,6 +276,7 @@ function DrawerSection({
   label,
   hint,
   rows,
+  hiddenCount,
   direction,
   meta,
   emptyHint,
@@ -278,10 +284,14 @@ function DrawerSection({
   label: string
   hint: string
   rows: AtRiskAggregateRow[]
+  hiddenCount: number
   direction: "loss" | "win"
   meta: Meta
   emptyHint: string
 }) {
+  // Count shown next to the section label = total in the bucket
+  // (visible rows + hidden), so the user knows the full scope.
+  const totalCount = rows.length + hiddenCount
   return (
     <section>
       <header className="mb-2 flex items-baseline justify-between gap-2">
@@ -289,8 +299,8 @@ function DrawerSection({
           <h3 className="text-[12.5px] font-semibold uppercase tracking-[0.14em] text-neutral-700">
             {label}
           </h3>
-          {rows.length > 0 && (
-            <span className="text-[11px] tabular-nums text-neutral-400">{rows.length}</span>
+          {totalCount > 0 && (
+            <span className="text-[11px] tabular-nums text-neutral-400">{totalCount}</span>
           )}
         </div>
         <span className="text-[11px] text-neutral-400">{hint}</span>
@@ -298,16 +308,26 @@ function DrawerSection({
       {rows.length === 0 ? (
         <p className="text-[12.5px] text-neutral-500 italic">{emptyHint}</p>
       ) : (
-        <ul className="flex flex-col gap-2">
-          {rows.map((row) => (
-            <InboxRow
-              key={`${row.sku}-${row.sub_channel}`}
-              row={row}
-              meta={meta}
-              direction={direction}
-            />
-          ))}
-        </ul>
+        <>
+          <ul className="flex flex-col gap-2">
+            {rows.map((row) => (
+              <InboxRow
+                key={`${row.sku}-${row.sub_channel}`}
+                row={row}
+                meta={meta}
+                direction={direction}
+              />
+            ))}
+          </ul>
+          {hiddenCount > 0 && (
+            <p
+              className="mt-2 text-[11.5px] text-neutral-400 italic"
+              title={`Top 3 shown · ${hiddenCount} more SKU${hiddenCount === 1 ? "" : "s"} in this bucket`}
+            >
+              +{hiddenCount} more {direction === "loss" ? "behind plan" : "ahead of plan"}
+            </p>
+          )}
+        </>
       )}
     </section>
   )
