@@ -82,7 +82,11 @@ async function Inbox({ customer }: { customer: Customer | null }) {
   // scoped to the same period the pulse endpoint picks (current/upcoming
   // month) so the brand & channel chips agree with the headline number.
   const [gaps, meta, pulse, brands, channels] = await Promise.all([
-    serverFetch<GapItem[]>("/api/gap"),
+    // limit=2000 + min_quality=0 returns the full slate (losses AND
+    // wins) so the customer drawer can show both sides of the basket.
+    // /api/gap's default `limit=50` sorted gap_hl_asc would only return
+    // the 50 worst losses system-wide, never reaching positive rows.
+    serverFetch<GapItem[]>("/api/gap?limit=2000&min_quality=0"),
     serverFetch<Meta>("/api/meta"),
     serverFetch<Pulse>("/api/pulse").catch(() => null),
     serverFetch<BrandRollup[]>("/api/forecast/by-brand?limit=8").catch(() => []),
@@ -103,44 +107,58 @@ async function Inbox({ customer }: { customer: Customer | null }) {
       ])
     : [brands, channels]
 
-  // For the drawer — aggregate at-risk months per SKU instead of picking
-  // one representative month. A SKU at risk in Jul, Aug, and Oct is more
-  // urgent than one only at risk in Jul, and the call agenda should reflect
-  // the full pain, not a single arbitrary month. We keep the worst month
-  // around for the deep-link (so clicking lands on the most informative
-  // detail page) but the row displays the cumulative impact.
-  const negatives: AtRiskAggregateRow[] = customer
-    ? (() => {
-        const customerNegatives = gaps.filter(
-          (g) => gapMatchesCustomer(g, customer) && g.gap_hl < 0,
-        )
-        const bySku = new Map<string, AtRiskAggregateRow>()
-        for (const g of customerNegatives) {
-          const key = `${g.sku}|${g.sub_channel}`
-          const cur = bySku.get(key)
-          if (!cur) {
-            bySku.set(key, {
-              sku: g.sku,
-              sub_channel: g.sub_channel,
-              worst: g,
-              monthsAtRisk: 1,
-              totalGapHl: g.gap_hl,
-              totalGapGbp: g.gap_gbp ?? null,
-              history_hl: g.history_hl ?? [],
-            })
-          } else {
-            cur.monthsAtRisk += 1
-            cur.totalGapHl += g.gap_hl
-            if (g.gap_gbp != null) {
-              cur.totalGapGbp = (cur.totalGapGbp ?? 0) + g.gap_gbp
-            }
-            if (g.gap_hl < cur.worst.gap_hl) cur.worst = g
-          }
+  // For the drawer — aggregate per (SKU × sub_channel) across all
+  // matching months in the horizon. Wins and losses are aggregated
+  // SEPARATELY: a SKU might be ahead in Jul AND behind in Oct/Nov, so
+  // it can legitimately appear in BOTH sections (different commercial
+  // conversations: "let's lock the Jul volume" vs "what about Oct?").
+  // The "worst" field is the most-extreme month in that direction —
+  // most negative for losses (worst miss), most positive for wins
+  // (best ahead) — and powers the deep-link to the decision page.
+  function aggregateForCustomer(
+    direction: "loss" | "win",
+  ): AtRiskAggregateRow[] {
+    if (!customer) return []
+    const filtered = gaps.filter(
+      (g) =>
+        gapMatchesCustomer(g, customer) &&
+        (direction === "loss" ? g.gap_hl < 0 : g.gap_hl > 0),
+    )
+    const bySku = new Map<string, AtRiskAggregateRow>()
+    for (const g of filtered) {
+      const key = `${g.sku}|${g.sub_channel}`
+      const cur = bySku.get(key)
+      if (!cur) {
+        bySku.set(key, {
+          sku: g.sku,
+          sub_channel: g.sub_channel,
+          worst: g,
+          monthsAtRisk: 1,
+          totalGapHl: g.gap_hl,
+          totalGapGbp: g.gap_gbp ?? null,
+          history_hl: g.history_hl ?? [],
+        })
+      } else {
+        cur.monthsAtRisk += 1
+        cur.totalGapHl += g.gap_hl
+        if (g.gap_gbp != null) {
+          cur.totalGapGbp = (cur.totalGapGbp ?? 0) + g.gap_gbp
         }
-        // Sort by the worst total impact first.
-        return [...bySku.values()].sort((a, b) => a.totalGapHl - b.totalGapHl)
-      })()
-    : []
+        const isMoreExtreme =
+          direction === "loss"
+            ? g.gap_hl < cur.worst.gap_hl
+            : g.gap_hl > cur.worst.gap_hl
+        if (isMoreExtreme) cur.worst = g
+      }
+    }
+    // Worst losses first (most-negative); biggest wins first (most-positive).
+    return [...bySku.values()].sort((a, b) =>
+      direction === "loss" ? a.totalGapHl - b.totalGapHl : b.totalGapHl - a.totalGapHl,
+    )
+  }
+
+  const negatives: AtRiskAggregateRow[] = aggregateForCustomer("loss")
+  const positives: AtRiskAggregateRow[] = aggregateForCustomer("win")
 
   // Prefer the soonest UPCOMING call for this customer — past meetings live
   // in the list too (for the calendar's "done" chips) and otherwise win the
@@ -203,20 +221,29 @@ async function Inbox({ customer }: { customer: Customer | null }) {
             activeCall ? WEEKDAYS[new Date(activeCall.date_iso).getDay()] : null
           }
         >
-          {negatives.length === 0 ? (
+          {negatives.length === 0 && positives.length === 0 ? (
             <div className="py-10 text-center text-sm text-neutral-500">
-              No gaps for this customer — they&apos;re on plan.
+              No movement either way for this customer — flat YoY.
             </div>
           ) : (
-            <ul className="flex flex-col gap-2">
-              {negatives.map((row) => (
-                <InboxRow
-                  key={`${row.sku}-${row.sub_channel}`}
-                  row={row}
-                  meta={meta}
-                />
-              ))}
-            </ul>
+            <div className="flex flex-col gap-6">
+              <DrawerSection
+                label="Behind plan"
+                hint="Lead with these — they need an ask"
+                rows={negatives}
+                direction="loss"
+                meta={meta}
+                emptyHint="Nothing behind plan — they're growing across the basket."
+              />
+              <DrawerSection
+                label="Ahead of plan"
+                hint="Talking points — acknowledge before pivoting to misses"
+                rows={positives}
+                direction="win"
+                meta={meta}
+                emptyHint="No wins to acknowledge — every SKU is below YoY."
+              />
+            </div>
           )}
         </AtRiskDrawer>
       )}
@@ -240,23 +267,80 @@ const TONE_ICON: Record<ReturnType<typeof gapTone>, string> = {
   neutral:  "text-neutral-500",
 }
 
-function InboxRow({ row, meta }: { row: AtRiskAggregateRow; meta: Meta }) {
-  // The row's pill colour tracks the *worst-month* tone (the user's
-  // attention should match the deepest pain point, not the average).
+function DrawerSection({
+  label,
+  hint,
+  rows,
+  direction,
+  meta,
+  emptyHint,
+}: {
+  label: string
+  hint: string
+  rows: AtRiskAggregateRow[]
+  direction: "loss" | "win"
+  meta: Meta
+  emptyHint: string
+}) {
+  return (
+    <section>
+      <header className="mb-2 flex items-baseline justify-between gap-2">
+        <div className="flex items-baseline gap-2">
+          <h3 className="text-[12.5px] font-semibold uppercase tracking-[0.14em] text-neutral-700">
+            {label}
+          </h3>
+          {rows.length > 0 && (
+            <span className="text-[11px] tabular-nums text-neutral-400">{rows.length}</span>
+          )}
+        </div>
+        <span className="text-[11px] text-neutral-400">{hint}</span>
+      </header>
+      {rows.length === 0 ? (
+        <p className="text-[12.5px] text-neutral-500 italic">{emptyHint}</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {rows.map((row) => (
+            <InboxRow
+              key={`${row.sku}-${row.sub_channel}`}
+              row={row}
+              meta={meta}
+              direction={direction}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function InboxRow({
+  row,
+  meta,
+  direction,
+}: {
+  row: AtRiskAggregateRow
+  meta: Meta
+  direction: "loss" | "win"
+}) {
+  // The row's pill colour tracks the *most-extreme month* tone — for
+  // losses that's the deepest miss; for wins it's the biggest beat.
   const tone = gapTone(row.worst.gap_pct)
-  // Deep-link to the worst month — the decision page lands on the most
-  // informative period for this SKU × channel.
+  // Deep-link to the most-extreme month — the decision page lands on
+  // the most informative period for this SKU × channel.
   const href = `/decision/${encodeURIComponent(row.sku)}/${encodeURIComponent(
     row.sub_channel,
   )}?period=${encodeURIComponent(row.worst.period)}`
 
-  // Subtitle copy: lead with channel, then "X months at risk · worst Jul".
-  // Avoids the previous "forecast for Jul 2026" which made it look like
-  // the SKU only had one problem month.
+  // Subtitle copy varies by direction: "at risk" / "worst MMM" for
+  // losses, "ahead" / "best MMM" for wins. Singular/plural is
+  // grammar-aware ("1 month" vs "N months").
+  const isWin = direction === "win"
+  const noun = isWin ? "ahead" : "at risk"
+  const superlative = isWin ? "best" : "worst"
   const monthsPhrase =
     row.monthsAtRisk === 1
-      ? `1 month at risk · ${formatPeriod(row.worst.period)}`
-      : `${row.monthsAtRisk} months at risk · worst ${formatPeriod(row.worst.period)}`
+      ? `1 month ${noun} · ${formatPeriod(row.worst.period)}`
+      : `${row.monthsAtRisk} months ${noun} · ${superlative} ${formatPeriod(row.worst.period)}`
 
   return (
     <li>
