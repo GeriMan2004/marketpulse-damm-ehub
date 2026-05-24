@@ -35,29 +35,16 @@ const CONFIDENCE_CHIP: Record<string, string> = {
   low:    "bg-[color:var(--negative-soft)] text-[color:var(--negative)]",
 }
 
-// Per-kind visual + grouping copy. The kind is the *type of bet* the
-// user is choosing — Repeat what worked / Catch an event / Close the gap —
-// not a risk-level abstraction.
+// Per-kind eyebrow + icon. Visual styling is now uniform across kinds
+// (dark CTA surface) since the row reads as one "Pick a play" action
+// strip rather than three differentiated cards.
 const PLAY_META: Record<
   Play["kind"],
-  { eyebrow: string; icon: typeof History; iconClass: string; isPrimary?: boolean }
+  { eyebrow: string; icon: typeof History }
 > = {
-  repeat: {
-    eyebrow: "Repeat what worked",
-    icon: History,
-    iconClass: "text-neutral-600 bg-neutral-100",
-  },
-  event: {
-    eyebrow: "Catch an event",
-    icon: CalendarClock,
-    iconClass: "text-[color:var(--positive)] bg-[color:var(--positive-soft)]",
-  },
-  "gap-closer": {
-    eyebrow: "Close the gap",
-    icon: Target,
-    iconClass: "text-white bg-neutral-900",
-    isPrimary: true,
-  },
+  repeat:       { eyebrow: "Repeat what worked", icon: History },
+  event:        { eyebrow: "Catch an event",     icon: CalendarClock },
+  "gap-closer": { eyebrow: "Close the gap",      icon: Target },
 }
 
 export async function DiagnosisPanel({
@@ -320,31 +307,33 @@ function PlayCard({ play, href }: { play: Play; href: string }) {
   const meta = PLAY_META[play.kind]
   const Icon = meta.icon
   const closurePct = play.expected_gap_closed_pct ?? 0
-  const closureColor = closurePct > 0 ? "text-[var(--positive)]" : "text-neutral-700"
+  const monthsCount = (play.months ?? []).length
+  const monthsLabel = monthsCount > 0
+    ? monthsCount === 1 ? (play.months ?? [])[0] : `${monthsCount} months`
+    : "—"
 
   return (
+    // Dark surface so the row reads as a CTA strip rather than three
+    // more info cards (which is how it landed when they were white +
+    // grey border alongside the supporting cards above). Click → run.
     <Link
       href={href as Parameters<typeof Link>[0]["href"]}
-      className={`group flex h-full flex-col gap-2.5 rounded-xl border bg-white px-4 py-3.5 transition-all hover:border-neutral-400 hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] ${
-        meta.isPrimary ? "border-neutral-900" : "border-neutral-200"
-      }`}
+      className="group flex h-full flex-col gap-3 rounded-xl bg-neutral-900 text-white px-4 py-4 transition-colors hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
     >
-      {/* Eyebrow + gap-closed badge. The eyebrow itself names the kind of
-          play (REPEAT / CLOSE THE GAP / CATCH AN EVENT) so the body below
-          doesn't need to repeat the source. */}
+      {/* Eyebrow row: kind icon + label + gap-closed badge */}
       <div className="flex items-center gap-2">
         <span
-          className={`inline-flex h-5 w-5 items-center justify-center rounded-md ${meta.iconClass}`}
+          className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-white/10 text-white/90"
           aria-hidden
         >
           <Icon className="h-3 w-3" />
         </span>
-        <span className="text-[10.5px] font-medium uppercase tracking-[0.14em] text-neutral-500">
+        <span className="text-[10.5px] font-medium uppercase tracking-[0.14em] text-white/55">
           {meta.eyebrow}
         </span>
         {play.expected_gap_closed_pct != null && (
           <span
-            className={`ml-auto text-[12px] font-semibold tabular-nums ${closureColor}`}
+            className="ml-auto text-[12px] font-semibold tabular-nums text-[color:var(--positive)]"
             title="Estimated share of the current month's gap this play would close"
           >
             {formatPercent(closurePct, 0)}
@@ -352,29 +341,27 @@ function PlayCard({ play, href }: { play: Play; href: string }) {
         )}
       </div>
 
-      {/* Concrete action — what the user would do. */}
-      <div className="text-[13.5px] font-semibold text-neutral-900 leading-snug">
+      {/* The action — large + bright so it reads as the button label. */}
+      <div className="text-[14px] font-semibold text-white leading-snug">
         {play.title}
       </div>
 
-      {/* One-liner grounding — full sentence lives in the hover title so
-          the card stays compact while the curious user can dig in. */}
+      {/* One-liner grounding (dimmed). Full sentence on hover. */}
       <p
-        className="mt-auto text-[11.5px] text-neutral-500 leading-snug line-clamp-2"
+        className="mt-auto text-[11.5px] text-white/55 leading-snug line-clamp-2"
         title={play.why}
       >
         {play.why}
       </p>
 
-      <div className="flex items-center justify-between gap-2 text-[11px] text-neutral-400">
-        <span>
-          {(play.months ?? []).length > 0
-            ? (play.months ?? []).length === 1
-              ? (play.months ?? [])[0]
-              : `${(play.months ?? []).length} months`
-            : "—"}
+      {/* Footer: months scope on the left, explicit "Run" CTA on the
+          right so it's unambiguously a button rather than a link. */}
+      <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/10">
+        <span className="text-[11px] text-white/40 tabular-nums">{monthsLabel}</span>
+        <span className="inline-flex items-center gap-1.5 text-[11.5px] font-medium text-white group-hover:text-[color:var(--positive)] transition-colors">
+          Run play
+          <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
         </span>
-        <ArrowRight className="h-3.5 w-3.5 group-hover:text-neutral-700 transition-colors" />
       </div>
     </Link>
   )
