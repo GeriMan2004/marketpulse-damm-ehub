@@ -6,24 +6,8 @@
  */
 
 import type { Metadata } from "next"
-import { Inter, Instrument_Serif } from "next/font/google"
+import { GeistSans } from "geist/font/sans"
 import "./globals.css"
-
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-  display: "swap",
-})
-
-// ElevenLabs-style editorial display serif. Loaded for the single "Welcome
-// back, …" h1 on the inbox; everything else stays Inter for legibility.
-const instrumentSerif = Instrument_Serif({
-  variable: "--font-instrument-serif",
-  weight: "400",
-  style: ["normal", "italic"],
-  subsets: ["latin"],
-  display: "swap",
-})
 
 export const metadata: Metadata = {
   title: "Ramp — Commercial Intelligence for UK Trade",
@@ -33,8 +17,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${instrumentSerif.variable} h-full antialiased`}>
-      <body className="min-h-full bg-background text-foreground">{children}</body>
+    <html lang="en" className={`${GeistSans.variable} h-full antialiased`}>
+      <body className="min-h-full bg-background text-foreground font-sans">
+        {children}
+      </body>
     </html>
   )
 }

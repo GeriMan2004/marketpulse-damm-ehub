@@ -484,6 +484,26 @@ export interface components {
             meeting_in_days: number;
             /** Skus */
             skus: components["schemas"]["BriefSkuInput"][];
+            /**
+             * Wins Count
+             * @default 0
+             */
+            wins_count: number;
+            /**
+             * Wins Hl
+             * @default 0
+             */
+            wins_hl: number;
+            /**
+             * Losses Count
+             * @default 0
+             */
+            losses_count: number;
+            /**
+             * Losses Hl
+             * @default 0
+             */
+            losses_hl: number;
         };
         /** BriefResponse */
         BriefResponse: {
@@ -503,6 +523,21 @@ export interface components {
             market_context: components["schemas"]["BriefNewsItem"][];
             /** Agenda */
             agenda: components["schemas"]["BriefAgendaItem"][];
+            /**
+             * Wins Count
+             * @default 0
+             */
+            wins_count: number;
+            /**
+             * Losses Count
+             * @default 0
+             */
+            losses_count: number;
+            /**
+             * Net Hl
+             * @default 0
+             */
+            net_hl: number;
         };
         /**
          * BriefSkuInput

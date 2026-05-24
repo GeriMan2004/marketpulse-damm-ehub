@@ -14,8 +14,8 @@ import { PageContent } from "@/components/shell/PageContent"
 import { PageWidthWrapper } from "@/components/shell/PageWidthWrapper"
 import { Skeleton } from "@/components/ui/skeleton"
 import { serverFetch } from "@/lib/api"
-import { skuLabel, channelLabel } from "@/lib/meta"
-import { formatGBP, formatPeriod, gapColor } from "@/lib/format"
+import { skuLabel } from "@/lib/meta"
+import { formatGBP, gapColor } from "@/lib/format"
 import type { components } from "@/lib/api.gen"
 import { DiagnosisPanel } from "./diagnosis-panel"
 import { SimulatePanel } from "./simulate-panel"
@@ -53,14 +53,9 @@ export default async function DecisionPage({
     ? (tab as TabSlot)
     : "diagnosis"
 
-  const subhead =
-    `${channelLabel(meta, sub_channel)} · ${targetPeriod ? formatPeriod(targetPeriod) : "—"}`
-
-  // Aggregate the at-risk picture for this SKU × sub_channel across the
-  // full horizon (mirrors the inbox row format: "N months at risk · £-Yk").
-  // The currently-viewed period stays in the subhead — the chart focuses
-  // on that month — but the header chip describes the broader exposure
-  // rather than just one month's gap.
+  // The chart shows the channel + period anyway; the header keeps just
+  // the SKU name + the headline gap chip. Channel is implicit in the URL
+  // path and shown again on the chart card. Less is more.
   const monthsAtRisk = matchingGaps.length
   const worstGap = matchingGaps.length > 0
     ? matchingGaps.reduce((a, b) => (a.gap_pct < b.gap_pct ? a : b))
@@ -70,25 +65,18 @@ export default async function DecisionPage({
     return (s ?? 0) + g.gap_gbp
   }, null)
 
-  // Compose the header title: SKU name + channel/period + aggregate gap
-  // (replaces the dedicated KPI strip that used to sit below the chart).
   const headerTitle = (
     <span className="flex items-baseline gap-2 min-w-0">
       <span className="truncate">{skuLabel(meta, sku)}</span>
-      <span className="hidden sm:inline text-[13px] font-normal text-neutral-500 truncate">
-        {subhead}
-      </span>
-      {monthsAtRisk > 0 && worstGap && (
+      {monthsAtRisk > 0 && worstGap && totalGapGbp != null && (
         <span
-          className="hidden md:inline text-[13px] font-semibold tabular-nums shrink-0"
+          className="hidden md:inline text-[13px] font-medium tabular-nums shrink-0"
           style={{ color: gapColor(worstGap.gap_pct) }}
         >
-          · {monthsAtRisk} {monthsAtRisk === 1 ? "month" : "months"} at risk
-          {totalGapGbp != null && (
-            <span className="ml-1 font-normal text-neutral-500">
-              ≈ {formatGBP(totalGapGbp)} cum.
-            </span>
-          )}
+          {formatGBP(totalGapGbp)}
+          <span className="ml-1 font-normal text-neutral-400">
+            · {monthsAtRisk}mo at risk
+          </span>
         </span>
       )}
     </span>

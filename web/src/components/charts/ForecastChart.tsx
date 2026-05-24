@@ -74,19 +74,40 @@ export function ForecastChart({
   const isoToShort = new Map(data.map((d) => [d.periodIso, d.period]))
 
   // Filter to annotations that land inside the chart's visible range.
-  const visiblePromos = (promoWindows ?? []).filter((w) =>
+  const candidatePromos = (promoWindows ?? []).filter((w) =>
     monthsOverlap(w.period_start, w.period_end, data)
   )
   const visibleEvents = (events ?? []).filter((e) => isoToShort.has(e.period))
 
-  // Map each datum's period to any promo it sits inside. Used by the tooltip.
+  // Per-month promo dedup. Estrella (and friends) can have 4-5 promo
+  // windows overlapping the same month — multi-buy, two price variants,
+  // a rollback — and rendering them all just stacks ReferenceAreas on
+  // top of each other into an unreadable smear. Pick ONE per month:
+  // priority by type (multibuy > price > display) then by window length.
+  const TYPE_PRIORITY: Record<PromoWindow["type"], number> = {
+    multibuy: 3,
+    price: 2,
+    display: 1,
+  }
+  function _promoScore(w: PromoWindow): number {
+    const days = Math.max(
+      1,
+      Math.round((new Date(w.period_end).getTime() - new Date(w.period_start).getTime()) / 86_400_000),
+    )
+    return (TYPE_PRIORITY[w.type] ?? 0) * 1_000 + days
+  }
   const promoByPeriod = new Map<string, PromoWindow>()
   for (const d of data) {
-    const hit = (promoWindows ?? []).find((w) =>
-      withinPromoWindow(d.periodIso, w.period_start, w.period_end)
+    const hits = candidatePromos.filter((w) =>
+      withinPromoWindow(d.periodIso, w.period_start, w.period_end),
     )
-    if (hit) promoByPeriod.set(d.period, hit)
+    if (hits.length === 0) continue
+    hits.sort((a, b) => _promoScore(b) - _promoScore(a))
+    promoByPeriod.set(d.period, hits[0])
   }
+  // `visiblePromos` becomes the unique set of winners across periods —
+  // so each gets exactly one ReferenceArea instead of N overlapping ones.
+  const visiblePromos = Array.from(new Set(promoByPeriod.values()))
 
   // Same trick for calendar events — surface in tooltip rather than as
   // labels on the chart, which collide when events cluster (Christmas/Boxing/NYE).

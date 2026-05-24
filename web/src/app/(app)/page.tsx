@@ -169,7 +169,7 @@ async function Inbox({ customer }: { customer: Customer | null }) {
         {pulse && <UkPulseHero pulse={pulse} />}
         <div className="flex flex-col gap-5 min-w-0">
           <RollupChips
-            heading="Gap vs target · by brand"
+            heading="By brand"
             items={brandsScoped.map((b) => ({
               label: titleCaseBrand(b.brand),
               gap_pct: b.gap_pct,
@@ -178,7 +178,7 @@ async function Inbox({ customer }: { customer: Customer | null }) {
             emptyHint="No brand data for this period."
           />
           <RollupChips
-            heading="Gap vs target · by channel"
+            heading="By channel"
             items={channelsScoped.map((c) => ({
               label: c.name,
               gap_pct: c.gap_pct,

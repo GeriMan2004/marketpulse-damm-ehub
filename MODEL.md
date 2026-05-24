@@ -36,6 +36,7 @@ Lags (1, 3, 6, 12), rolling means (3, 6, 12), month/quarter, sin/cos seasonality
 What the model does **not** see directly: planned promos (not joined into the training panel) and one-off mega-events (World Cup, Euros — only fire every 2-4 years so LGB has 0-1 training instances). Both are handled separately:
 - Promos: simulator applies a deterministic lift curve at runtime (see [services/forecast/simulate.py](backend/app/services/forecast/simulate.py)).
 - One-off events: ensemble step applies a +5% post-forecast boost to affected months ([services/calendar.py](backend/app/services/calendar.py)), calibrated from Euros 2024 — see [DATA.md](DATA.md#event-importance-and-evidence-for-the-boost).
+- Monthly seasonality shape: iterative h-step LGB smooths out variation by horizon 4+ (each step feeds its own p50 forward as the next lag). To recover the shape we apply a per-(brand × sub_channel × month) multiplicative index post-forecast in [services/seasonality.py](backend/app/services/seasonality.py) — derived from pooled-across-SKUs historical actuals, bounded to [0.55, 1.80], renormalized so the 12-month mean is 1.0 (annual level preserved, only intra-year shape changes). Currently lifts the hero SKU's peak-to-trough ratio from ~1.2× to ~2.9× across the 9-month horizon — matching the actuals' seasonality.
 
 ## Ensemble weights per channel
 

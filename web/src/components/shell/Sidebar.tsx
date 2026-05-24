@@ -42,7 +42,7 @@ import { Logo } from "@/components/brand/Logo"
 import { NewsCard } from "@/components/market-pulse/NewsCard"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useMarketPulse } from "@/lib/hooks/useMarketPulse"
-import { useCriticalGapCount, usePromoLibrarySize } from "@/lib/hooks/useNavCounts"
+import { useUpcomingCallsCount, usePromoLibrarySize } from "@/lib/hooks/useNavCounts"
 import { cn } from "@/lib/utils"
 
 type NavHref = "/" | "/promos" | "/brief"
@@ -81,7 +81,7 @@ export function Sidebar() {
     return pathname === href || pathname.startsWith(`${href}/`)
   }
 
-  const criticalCount = useCriticalGapCount()
+  const upcomingCalls = useUpcomingCallsCount()
   const promoCount = usePromoLibrarySize()
   const { articles, isLoading: newsLoading } = useMarketPulse()
 
@@ -173,7 +173,7 @@ export function Sidebar() {
                   item={item}
                   active={isActive(item.href)}
                   badge={
-                    item.href === "/" ? criticalCount :
+                    item.href === "/" ? upcomingCalls :
                     item.href === "/promos" ? promoCount :
                     null
                   }

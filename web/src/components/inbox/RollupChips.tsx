@@ -36,13 +36,26 @@ export function RollupChips({
       {items.length === 0 ? (
         <p className="pl-4 text-[12px] text-neutral-500">{emptyHint ?? "—"}</p>
       ) : (
-        // Borderless chip rail on a soft recessed surface: secondary
-        // content recedes underneath the shadowed hero card, with the
-        // same horizontal swipe affordance as before.
-        <div className="flex gap-1.5 pl-4 pr-4 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-          {items.map((it) => (
-            <Chip key={it.label} {...it} />
-          ))}
+        // Right-edge fade so the inevitable mid-chip cut at the viewport
+        // edge reads as "there's more, scroll →" rather than a rendering
+        // bug. The mask softens the last ~24px of the strip without
+        // affecting the chips themselves.
+        <div
+          className="overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+          style={{
+            maskImage:
+              "linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 24px), transparent 100%)",
+            WebkitMaskImage:
+              "linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 24px), transparent 100%)",
+          }}
+        >
+          {/* Vertical padding on the rail so the border doesn't sit flush
+              against neighbouring rows and look truncated. */}
+          <div className="flex gap-1.5 px-4 py-1">
+            {items.map((it) => (
+              <Chip key={it.label} {...it} />
+            ))}
+          </div>
         </div>
       )}
     </section>
@@ -52,15 +65,14 @@ export function RollupChips({
 function Chip({ label, gap_pct, gap_gbp }: ChipItem) {
   const tone = gapColor(gap_pct)
   return (
-    // No border. Surface is bg-neutral-50/70 so the chip reads as a
-    // recessed pill against the page rather than a peer to the hero card.
-    // Single horizontal line: label · £ · % — the brand/channel name
-    // leads, the £ provides material context, the % is the sharp number.
-    <div className="shrink-0 inline-flex items-baseline gap-3 rounded-lg bg-neutral-50/70 px-3 py-2 hover:bg-neutral-100/80 transition-colors">
-      <span className="text-[12.5px] font-medium text-neutral-700 truncate">
+    // Inset `border` instead of `ring` — ring renders outside the box and
+    // gets clipped at the edges of the scroll container; border is part
+    // of the box and survives clean. Single line: label · £ · %.
+    <div className="shrink-0 inline-flex items-baseline gap-3 rounded-lg bg-white border border-neutral-200 px-3.5 py-2.5 hover:bg-neutral-50 transition-colors">
+      <span className="text-[12.5px] font-medium text-neutral-900 truncate">
         {label}
       </span>
-      <span className="text-[11px] text-neutral-400 tabular-nums">
+      <span className="text-[11px] text-neutral-500 tabular-nums">
         {gap_gbp != null ? `≈ ${formatGBP(gap_gbp)}` : "—"}
       </span>
       <span className="text-[12.5px] font-semibold tabular-nums" style={{ color: tone }}>

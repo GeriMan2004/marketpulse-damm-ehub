@@ -55,11 +55,17 @@ export default async function BriefPage({
     serverFetch<Meta>("/api/meta"),
   ])
 
-  // 2. Filter to this customer's basket and rank worst-first. Keep top 5.
-  const basket = gaps
-    .filter((g) => g.gap_hl < 0 && gapMatchesCustomer(g, customer))
-    .sort((a, b) => a.gap_pct - b.gap_pct)
-    .slice(0, 5)
+  // 2. The customer's whole basket — both wins and losses — so the brief
+  //    can frame the meeting on the NET picture, not the loss side alone.
+  const wholeBasket = gaps.filter((g) => gapMatchesCustomer(g, customer))
+  const wins = wholeBasket.filter((g) => g.gap_hl > 0)
+  const losses = wholeBasket.filter((g) => g.gap_hl < 0)
+  const winsHl = wins.reduce((s, g) => s + g.gap_hl, 0)
+  const lossesHl = losses.reduce((s, g) => s + g.gap_hl, 0)
+  // The actionable "top SKUs" list still ranks worst-first and shows
+  // 5 losses — losses are what the buyer can actually do something
+  // about in the meeting. Net + counts get sent separately.
+  const basket = losses.sort((a, b) => a.gap_pct - b.gap_pct).slice(0, 5)
 
   // 3. Get the top SHAP driver per SKU (best-effort, parallel; failures
   //    just leave the driver blank — the brief still works).
@@ -103,6 +109,10 @@ export default async function BriefPage({
       gap_hl: g.gap_hl,
       top_driver: topDrivers[i],
     })),
+    wins_count: wins.length,
+    wins_hl: winsHl,
+    losses_count: losses.length,
+    losses_hl: lossesHl,
   }
 
   // 6. Call the brief endpoint. Throws on backend error — that's loud
@@ -166,15 +176,39 @@ function BriefView({
           {dateLine} · {brief.meeting_label}
         </div>
         <h1 className="font-serif text-[44px] leading-[1.05] tracking-[-0.02em] text-neutral-900">
-          The {brief.customer} <span className="italic">Brief</span>
+          The {brief.customer} Brief
         </h1>
         <p className="mt-4 text-[15px] leading-[1.6] text-neutral-700">
           {brief.headline}
         </p>
+        {/* Net basket pill — wins and losses side-by-side so the reader
+            isn't blindsided by the "X SKUs behind" framing when there's
+            also material upside on other lines. */}
+        {(brief.wins_count + brief.losses_count) > 0 && (
+          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] tabular-nums">
+            <span className="text-[var(--positive)]">
+              <span className="font-semibold">{brief.wins_count}</span>
+              <span className="ml-1 text-neutral-500">ahead</span>
+            </span>
+            <span className="text-[var(--negative)]">
+              <span className="font-semibold">{brief.losses_count}</span>
+              <span className="ml-1 text-neutral-500">behind</span>
+            </span>
+            <span className="text-neutral-400">·</span>
+            <span className="text-neutral-700">
+              <span className="text-neutral-500">net </span>
+              <span className={`font-semibold ${
+                brief.net_hl >= 0 ? "text-[var(--positive)]" : "text-[var(--negative)]"
+              }`}>
+                {formatHl(brief.net_hl)}
+              </span>
+            </span>
+          </div>
+        )}
       </header>
 
-      {/* Push your work forward — the headline ask */}
-      <Section label="Push your work forward">
+      {/* The headline ask — what to push for in the meeting. */}
+      <Section label="The ask">
         <div className="rounded-xl bg-neutral-50 border border-neutral-200 p-5">
           <h3 className="font-serif text-[22px] leading-[1.2] tracking-tight text-neutral-900 mb-2">
             {brief.push_forward_title}

@@ -175,5 +175,9 @@ def build_promo_windows(
             type=cur_type,  # type: ignore[arg-type]
         ))
 
-    # Cap how many windows we annotate — too many = unreadable chart
-    return windows[:8]
+    # No hard cap. The chart filters to visible months only; capping at the
+    # oldest N silently dropped late-year promos for high-promo brands
+    # (e.g. Estrella has 150+ on-promo cells spanning Dec'25–Dec'26, but
+    # the first 8 coalesced windows were all Dec/Jan, so the chart never
+    # saw the rest). Payload is small enough that this is fine.
+    return windows

@@ -48,23 +48,24 @@ export function UkPulseHero({ pulse }: { pulse: Pulse }) {
       </div>
 
       {/* Row 2 — headline gap (the answer) on the left, SKUs at risk on
-          the right. Two strong anchor points instead of four scattered ones. */}
+          the right. Serif numeral to match the page's editorial type
+          system ("Welcome back, Sarah" / "May 2026"); the previous
+          sans-serif was reading as a generic data-tool widget. */}
       <div className="mt-4 grid grid-cols-[1fr_auto] gap-6 items-end">
         <div className="min-w-0">
-          <div className="flex items-baseline gap-2.5 flex-wrap">
+          <div className="flex items-baseline gap-3 flex-wrap">
             <span
-              className="text-[36px] font-semibold tabular-nums tracking-tight leading-none"
+              className="font-serif text-[44px] tabular-nums tracking-[-0.02em] leading-none"
               style={{ color: gapColour }}
             >
-              {positive ? "▲" : "▼"} {formatPercent(pulse.gap_pct, 1)}
+              {positive ? "+" : "−"}{Math.abs(pulse.gap_pct * 100).toFixed(1)}%
             </span>
             {pulse.gap_gbp != null && (
               <span
-                className="text-[14px] font-semibold tabular-nums"
-                style={{ color: gapColour }}
+                className="text-[14px] font-medium tabular-nums text-neutral-500"
                 title="Approximate £ impact at the portfolio average price per hL"
               >
-                ≈ {formatGBP(pulse.gap_gbp)}
+                {formatGBP(pulse.gap_gbp)}
               </span>
             )}
           </div>
@@ -84,7 +85,7 @@ export function UkPulseHero({ pulse }: { pulse: Pulse }) {
 
         {pulse.n_skus_at_risk > 0 && (
           <div className="text-right shrink-0">
-            <div className="text-[22px] font-semibold tabular-nums text-neutral-900 leading-none">
+            <div className="font-serif text-[28px] tabular-nums text-neutral-900 leading-none">
               {pulse.n_skus_at_risk}
             </div>
             <div className="mt-1 text-[10.5px] uppercase tracking-[0.16em] text-neutral-500 font-medium">

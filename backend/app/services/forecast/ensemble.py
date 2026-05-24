@@ -25,6 +25,10 @@ import polars as pl
 
 from app.services.calendar import build_events, oneoff_event_boost_for_month
 from app.services.forecast.features import build_features
+from app.services.seasonality import (
+    apply_seasonality,
+    compute_seasonality_multipliers,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 WIDE = ROOT / "app" / "data" / "snapshots" / "wide_monthly.parquet"
@@ -378,6 +382,22 @@ def main() -> int:
         ).drop("_boost")
     else:
         print("      one-off boost: no World Cup / Euros months in horizon — skipped")
+
+    # ── Seasonality multiplier ──────────────────────────────────────────
+    # The iterative LGB feeds its own p50 forward as the lag for the next
+    # step, so by h=4+ the forecast collapses to the conditional mean and
+    # the line goes flat. We've tried teaching the model the missing
+    # shape via features twice (event-importance, planned-promos); both
+    # rolled back. Easier to inject the shape deterministically AFTER
+    # the smooth forecast — see services/seasonality.py for the math.
+    monthly_for_seasonality = pl.read_parquet(WIDE)
+    seasonal_mult = compute_seasonality_multipliers(monthly_for_seasonality)
+    if seasonal_mult:
+        n_series = len({(k[0], k[1]) for k in seasonal_mult})
+        forecast = apply_seasonality(forecast, seasonal_mult)
+        print(f"      seasonality: shape injected for {n_series} (brand × sub_channel) series")
+    else:
+        print("      seasonality: no series had enough history — skipped")
 
     print(f"\n[4/4] persisting forecast.parquet + weights.json")
     forecast.write_parquet(SNAPSHOTS / "forecast.parquet")

@@ -159,7 +159,11 @@ function BudgetFlowGraph({
   const left = { x: 70, y: 94, h: 300, w: 12 }
   const promoX = 540
   const productX = 1110
-  const chartWidth = 1280
+  // Wider viewBox so the right-column product labels ("Estrella Damm ·
+  // 440ml can") have room — they were clipping at the old 1280 edge,
+  // ~30px from label start. 1520 gives ~390px of label space, enough
+  // for the longest brand+pack we ship.
+  const chartWidth = 1520
   const chartHeight = 500
 
   return (

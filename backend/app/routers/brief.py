@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from app.services import news as news_svc
 from app.services.llm import call_with_fallback
+from app.services.plays import build_plays
 
 router = APIRouter(prefix="/api", tags=["brief"])
 
@@ -49,11 +50,18 @@ class BriefSkuInput(BaseModel):
 
 
 class BriefRequest(BaseModel):
-    customer: str             # display label, e.g. "Tesco"
+    customer: str             # display label, e.g. "Trolley King"
     customer_key: Literal["tesco", "sainsburys", "asda", "morrisons", "on_trade"]
     meeting_weekday: str      # "Wednesday"
     meeting_in_days: int = Field(ge=0, le=30)
-    skus: list[BriefSkuInput] # already filtered to this customer's basket
+    skus: list[BriefSkuInput] # already filtered to this customer's at-risk basket
+    # Net picture for the WHOLE basket — `skus` above only carries the
+    # actionable losses (worst-5). These let the brief frame the meeting
+    # honestly: "you're ahead overall but…" vs "you're behind everywhere".
+    wins_count: int = 0
+    wins_hl: float = 0.0      # sum of positive gap_hl (always ≥ 0)
+    losses_count: int = 0
+    losses_hl: float = 0.0    # sum of negative gap_hl (always ≤ 0)
 
 
 class BriefSkuRow(BaseModel):
@@ -81,12 +89,17 @@ class BriefAgendaItem(BaseModel):
 class BriefResponse(BaseModel):
     customer: str
     meeting_label: str        # "Wednesday in 2 days"
-    headline: str             # 1-2 sentences framing the call
+    headline: str             # 1 sentence framing the call
     push_forward_title: str   # the ONE big ask
-    push_forward_body: str    # 2-3 sentence rationale
+    push_forward_body: str    # 2 sentence rationale
     top_skus: list[BriefSkuRow]
     market_context: list[BriefNewsItem]
     agenda: list[BriefAgendaItem]
+    # Net basket-level numbers so the FE can render "X wins · Y losses ·
+    # net £Z" alongside the prose. Mirrors the BriefRequest summary.
+    wins_count: int = 0
+    losses_count: int = 0
+    net_hl: float = 0.0       # wins_hl + losses_hl (negative = net behind)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -94,45 +107,48 @@ class BriefResponse(BaseModel):
 # ──────────────────────────────────────────────────────────────────────────
 
 
-_SYSTEM = """You are Ramp, a commercial-planning assistant for Damm UK.
-You write one-page meeting briefs for a UK Commercial Manager prepping for a customer call.
+_SYSTEM = """You write one-paragraph meeting briefs for a UK Commercial Manager prepping a customer call.
 
-Voice:
-- Specific, terse, actionable. No filler.
-- Cite the numbers you're given (gap %, gap hL, days).
-- Sound like a colleague who's already done the analysis, not a generic AI.
-- Never invent promotional mechanics or numbers not present in the input.
+Voice: terse, imperative, no filler. Cite the numbers you're given. Sound like a colleague who's already done the analysis. Never invent promo mechanics or numbers.
 
-Output: STRICT JSON only — no markdown fences, no prose outside the JSON.
+Output: STRICT JSON only. No markdown fences.
 """
 
 
-def _build_user_prompt(req: BriefRequest, total_gap_hl: float) -> str:
+def _build_user_prompt(req: BriefRequest, net_hl: float, top_play_title: str | None) -> str:
     sku_lines = "\n".join(
         f"- {s.sku_label} ({s.sub_channel}, {s.period}): "
         f"{s.gap_pct * 100:+.0f}% / {s.gap_hl:+.1f}k hL"
-        + (f" · top driver: {s.top_driver}" if s.top_driver else "")
+        + (f" · driver: {s.top_driver}" if s.top_driver else "")
         for s in req.skus[:5]
+    )
+    play_line = (
+        f"\nGrounded suggestion for the top SKU: {top_play_title}"
+        if top_play_title else ""
+    )
+    # Net framing: tell the LLM the WHOLE picture so it doesn't write
+    # "the basket is in trouble" when the customer is actually ahead net,
+    # or vice versa.
+    net_line = (
+        f"Whole basket net: {net_hl:+.1f}k hL  ({req.wins_count} SKUs ahead "
+        f"= +{req.wins_hl:.1f}k hL; {req.losses_count} SKUs behind "
+        f"= {req.losses_hl:.1f}k hL)."
     )
     return f"""Customer call: {req.customer} — {req.meeting_weekday}, in {req.meeting_in_days} days.
 
-Top SKUs at risk in this customer's basket ({len(req.skus)} total, showing top 5):
-{sku_lines}
+{net_line}
 
-Combined predicted miss across the basket: {total_gap_hl:+.1f}k hL.
+Top {min(5, len(req.skus))} actionable losses to discuss:
+{sku_lines}{play_line}
 
-Produce a one-page meeting brief. Return STRICT JSON:
+Return STRICT JSON:
 {{
-  "headline": "1-2 warm sentences framing the meeting. Mention the day, the basket size, and the dominant issue.",
-  "push_forward_title": "ONE specific action to push for in the meeting (8-14 words). Be concrete — name the SKU and the mechanic.",
-  "push_forward_body": "2-3 sentences explaining the action. Cite the gap, the lever, and a likely buyer concession to ask for.",
-  "sku_asks": ["one short recommended ask per SKU, in the same order as the input — 4-10 words each"]
+  "headline": "ONE sentence (max 20 words) — frame the meeting honestly given the NET picture. If net is positive, acknowledge it before pivoting to the losses.",
+  "push_forward_title": "ONE action to push for (max 10 words). Name the SKU and the mechanic.",
+  "push_forward_body": "TWO sentences (max 40 words total) — cite the loss-side gap and the buyer concession to ask for."
 }}
 
-Rules:
-- `sku_asks` MUST have exactly {len(req.skus[:5])} items (one per top-5 SKU).
-- Never mention promotional lifts you weren't given. Speak to the driver if one is provided.
-- The push-forward action should be the highest-impact single ask, derived from the top SKU.
+Be specific. No softeners. No 'consider' or 'discuss' — use imperatives ('pull forward', 'extend', 'push for', 'lock').
 """
 
 
@@ -168,7 +184,29 @@ def _news_for_brief(limit: int = 5) -> list[BriefNewsItem]:
 
 @router.post("/brief", response_model=BriefResponse)
 def post_brief(req: BriefRequest) -> BriefResponse:
-    total_gap_hl = sum(s.gap_hl for s in req.skus)
+    # NET = wins + losses (losses are stored as negative). If the caller
+    # didn't provide the wins side (older FE versions), fall back to the
+    # sum of the basket's signed gaps.
+    net_hl = req.wins_hl + req.losses_hl
+    if req.wins_count == 0 and req.losses_count == 0:
+        net_hl = sum(s.gap_hl for s in req.skus)
+
+    # Per-SKU grounded play — used both as the recommended_ask on the row
+    # AND as a hint to the LLM for the push-forward action so the prose
+    # references the same play the user sees on the decision page.
+    sku_plays: list[str | None] = []
+    for s in req.skus[:5]:
+        try:
+            plays = build_plays(s.sku, s.sub_channel, s.period)
+            if not plays:
+                sku_plays.append(None)
+                continue
+            # Highest expected gap-closed wins; ties broken by play order.
+            best = max(plays, key=lambda p: p.expected_gap_closed_pct or 0)
+            sku_plays.append(best.title)
+        except Exception:
+            sku_plays.append(None)
+    top_play_title = sku_plays[0] if sku_plays else None
 
     # LLM prose pieces — fallback to deterministic stubs on any failure.
     prose: dict = {}
@@ -177,9 +215,9 @@ def post_brief(req: BriefRequest) -> BriefResponse:
             "deep",
             messages=[
                 {"role": "system", "content": _SYSTEM},
-                {"role": "user", "content": _build_user_prompt(req, total_gap_hl)},
+                {"role": "user", "content": _build_user_prompt(req, net_hl, top_play_title)},
             ],
-            max_tokens=700,
+            max_tokens=400,
         )
         content = (resp.choices[0].message.content or "").strip()
         # Strip ```json fences if the model adds them despite instructions
@@ -192,26 +230,23 @@ def post_brief(req: BriefRequest) -> BriefResponse:
         log.warning("Brief LLM call failed (%s); using fallback prose.", e)
         prose = {}
 
+    net_direction = "ahead" if net_hl >= 0 else "behind"
     headline = prose.get("headline") or (
-        f"Walking into the {req.customer} meeting {req.meeting_weekday}: "
-        f"{len(req.skus)} SKUs behind plan, total bleed {total_gap_hl:+.1f}k hL. "
-        "The list below is what to bring."
+        f"{req.customer} {req.meeting_weekday}: net {net_hl:+.1f}k hL {net_direction} "
+        f"({req.wins_count} wins, {req.losses_count} losses) — lead with the losses."
     )
     push_title = prose.get("push_forward_title") or (
-        f"Walk the buyer through the top {min(3, len(req.skus))} at-risk SKUs"
+        top_play_title or f"Walk the buyer through the top {min(3, len(req.skus))} SKUs"
     )
     push_body = prose.get("push_forward_body") or (
-        f"The {req.customer} basket is forecasted to miss by {total_gap_hl:+.1f}k hL "
-        "in the next 9 months. Lead with the biggest miss, anchor in the top driver, "
-        "and ask for a concession on either promo timing or listing depth."
+        f"Net basket sits {net_hl:+.1f}k hL over the next 9 months. "
+        "Lead with the biggest loss-side gap and lock a concession on promo timing or listing depth."
     )
 
-    sku_asks = prose.get("sku_asks") or []
-    # Pad / truncate to len(top-5)
+    # Per-SKU recommended_ask = grounded play title from /api/plays. Falls
+    # back to the driver-anchored phrase only when no play can be grounded
+    # (no historical promo / event / gap context for that SKU).
     top_n = req.skus[:5]
-    while len(sku_asks) < len(top_n):
-        sku_asks.append("Discuss intervention options")
-
     top_skus = [
         BriefSkuRow(
             sku_label=s.sku_label,
@@ -220,7 +255,10 @@ def post_brief(req: BriefRequest) -> BriefResponse:
             gap_pct=s.gap_pct,
             gap_hl=s.gap_hl,
             top_driver=s.top_driver,
-            recommended_ask=str(sku_asks[i])[:120],
+            recommended_ask=sku_plays[i] or (
+                f"Address {s.top_driver}"
+                if s.top_driver else "Open with the gap, ask for a concession"
+            ),
         )
         for i, s in enumerate(top_n)
     ]
@@ -250,4 +288,7 @@ def post_brief(req: BriefRequest) -> BriefResponse:
         top_skus=top_skus,
         market_context=_news_for_brief(limit=5),
         agenda=agenda,
+        wins_count=req.wins_count,
+        losses_count=req.losses_count,
+        net_hl=net_hl,
     )
