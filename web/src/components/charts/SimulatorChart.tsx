@@ -11,6 +11,7 @@ type SimulatorDatum = {
   period: string
   baseline: number
   simulated?: number | null
+  target?: number | null
 }
 
 export function SimulatorChart({
@@ -31,12 +32,17 @@ export function SimulatorChart({
         ? "var(--chart-1)"
         : "var(--positive)"
   const hasSimulation = data.some((d) => d.simulated != null)
+  const hasTarget = data.some((d) => d.target != null)
 
   // Pad the Y domain ~20% above the visible range and ~10% below so the
-  // line sits in the middle of the plot area instead of riding the top
-  // (where it gets clipped by the ReferenceLine label) or the baseline.
-  // Forecast values never go negative, so we floor at 0.
-  const allValues = data.flatMap((d) => [d.baseline, ...(d.simulated != null ? [d.simulated as number] : [])])
+  // line sits in the middle of the plot area instead of riding the top.
+  // Include target values in the range so the dashed target line is
+  // always in frame when present.
+  const allValues = data.flatMap((d) => [
+    d.baseline,
+    ...(d.simulated != null ? [d.simulated as number] : []),
+    ...(d.target != null ? [d.target as number] : []),
+  ])
   const dataMin = allValues.length ? Math.min(...allValues) : 0
   const dataMax = allValues.length ? Math.max(...allValues) : 1
   const dataRange = Math.max(dataMax - dataMin, 1)
@@ -82,8 +88,15 @@ export function SimulatorChart({
           )}
           <Line
             type="monotone" dataKey="baseline" stroke="var(--muted-foreground)"
-            strokeWidth={1.5} strokeDasharray="4 4" dot={false} name="Current forecast"
+            strokeWidth={1.5} dot={false} name="Current forecast"
           />
+          {hasTarget && (
+            <Line
+              type="monotone" dataKey="target" stroke="var(--neutral)"
+              strokeWidth={1.5} strokeDasharray="4 4" dot={false} name="Target"
+              connectNulls
+            />
+          )}
           {hasSimulation && (
             <Line
               type="monotone" dataKey="simulated" stroke={simulatedColor}
@@ -119,17 +132,29 @@ function SimulatorTooltip({
         <span className="text-neutral-500">Current forecast</span>
         <span className="font-medium text-neutral-900">{formatHl(Number(datum.baseline))}</span>
       </div>
+      {datum.target != null && (
+        <div className="flex items-center justify-between gap-6 tabular-nums">
+          <span className="text-neutral-500">Target</span>
+          <span className="text-neutral-700">{formatHl(Number(datum.target))}</span>
+        </div>
+      )}
       {hasSim && (
         <>
           <div className="flex items-center justify-between gap-6 tabular-nums">
             <span className="text-neutral-500">With this action</span>
             <span className="font-medium text-neutral-900">{formatHl(Number(datum.simulated))}</span>
           </div>
-          <div className="mt-1.5 border-t border-neutral-100 pt-1.5 tabular-nums">
-            <span className={delta && delta >= 0 ? "text-[var(--positive)]" : "text-[var(--negative)]"}>
-              {delta && delta > 0 ? "+" : ""}{formatHl(delta ?? 0)}
-            </span>
-          </div>
+          {datum.target != null && (
+            <div className="mt-1.5 border-t border-neutral-100 pt-1.5 tabular-nums">
+              {Number(datum.simulated) >= Number(datum.target) ? (
+                <span className="text-[var(--positive)]">Above target ✓</span>
+              ) : (
+                <span className="text-[var(--negative)]">
+                  Still short by {formatHl(Number(datum.target) - Number(datum.simulated))}
+                </span>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>

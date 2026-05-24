@@ -226,15 +226,21 @@ def simulate(req: SimulationRequest) -> SimulationResult:
 
     boost_avg = (boost_sum / boost_n) if boost_n else 1.0
 
-    # Gap vs target.
+    # Gap vs target. Carry the per-month breakdown too so the FE can
+    # render the target dashed line on the simulator chart and count
+    # how many months actually clear target after the action.
     target_hl = 0.0
+    targets_by_period: dict[str, float] = {}
     if TARGETS.is_file():
         tgt = pl.read_parquet(TARGETS).filter(
             (pl.col("material_id") == req.sku)
             & (pl.col("sub_channel") == req.sub_channel)
             & (pl.col("date").is_in(target_dates))
         )
-        target_hl = float(tgt["target_hl"].sum()) if len(tgt) else 0.0
+        if len(tgt):
+            target_hl = float(tgt["target_hl"].sum())
+            for r in tgt.iter_rows(named=True):
+                targets_by_period[r["date"].strftime("%b.%y")] = float(r["target_hl"])
 
     baseline_hl = sum(p.point for p in points_baseline)
     simulated_hl = sum(p.point for p in points_simulated)
@@ -290,6 +296,7 @@ def simulate(req: SimulationRequest) -> SimulationResult:
             sku=req.sku, sub_channel=req.sub_channel,
             granularity="month", points=points_simulated,
         ),
+        targets_by_period=targets_by_period,
         gap_before_hl=gap_before,
         gap_after_hl=gap_after,
         gap_closed_pct=gap_closed_pct,

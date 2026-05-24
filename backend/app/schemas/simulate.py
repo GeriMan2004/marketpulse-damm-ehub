@@ -40,6 +40,11 @@ class SimulationRequest(BaseModel):
 class SimulationResult(BaseModel):
     baseline: ForecastSeries
     simulated: ForecastSeries
+    # Per-month target volume — keyed by period label ("Jul.26") so the FE
+    # can render the dashed target line on the simulator chart and the
+    # badge can count how many months actually clear target after the
+    # action, not just whether the cumulative shortfall is covered.
+    targets_by_period: dict[str, float] = Field(default_factory=dict)
     gap_before_hl: float
     gap_after_hl: float
     gap_closed_pct: float

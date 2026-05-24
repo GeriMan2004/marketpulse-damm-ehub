@@ -128,18 +128,53 @@ export function SimulatePanel({
       const simulatedByPeriod = new Map(
         (result.simulated.points ?? []).map((p) => [p.period, p.point]),
       )
+      // targets_by_period is a new field on SimulationResult — only the
+      // months the simulator was asked about have targets attached, so
+      // we look up per-period and accept null for months outside scope.
+      const targetByPeriod = (result.targets_by_period ?? {}) as Record<string, number>
       return baselinePoints.map((p) => ({
         period: p.period,
         baseline: p.point,
         simulated: simulatedByPeriod.get(p.period) ?? p.point,
+        target: targetByPeriod[p.period] ?? null,
       }))
     }
     return baselinePoints.map((p) => ({
       period: p.period,
       baseline: p.point,
       simulated: null,
+      target: null,
     }))
   }, [baselinePoints, result, resultHasPoints])
+
+  // Per-month "above target" tally — drives the badge and notes line.
+  // Counts ONLY months that have a target (i.e. the months the
+  // simulator was asked about, which is the same as activeMonths).
+  const targetCoverage = useMemo(() => {
+    if (!result || !resultHasPoints) return null
+    const targets = (result.targets_by_period ?? {}) as Record<string, number>
+    const simulatedByPeriod = new Map(
+      (result.simulated.points ?? []).map((p) => [p.period, p.point]),
+    )
+    let above = 0
+    let total = 0
+    let worstShortLabel: string | null = null
+    let worstShortHl = 0
+    for (const [period, target] of Object.entries(targets)) {
+      total += 1
+      const sim = simulatedByPeriod.get(period)
+      if (sim != null && sim >= target) {
+        above += 1
+      } else if (sim != null) {
+        const shortBy = target - sim
+        if (shortBy > worstShortHl) {
+          worstShortHl = shortBy
+          worstShortLabel = period
+        }
+      }
+    }
+    return { above, total, worstShortLabel, worstShortHl }
+  }, [result, resultHasPoints])
 
   const selectedBaseline = sumSelected(baselinePoints, activeMonths)
   const simulatedTotal = resultHasPoints
@@ -204,17 +239,26 @@ export function SimulatePanel({
       : `a ${effortLevel} ${ACTION_META[actionType].title.toLowerCase()}`
     const liftPct = (result.applied_lift_pct * 100).toFixed(1)
     const eventLine = result.event_boost_avg && result.event_boost_avg > 1.0
-      ? ` Event boost of +${((result.event_boost_avg - 1) * 100).toFixed(0)}% applied (high-traffic month).`
+      ? ` Event boost of +${((result.event_boost_avg - 1) * 100).toFixed(0)}% applied (high-traffic months).`
       : ""
-    // The cumulative-closure framing can mislead — if total lift sums
-    // to the total shortfall, the headline reads "fully covered" even
-    // though high-baseline months overshoot and low-baseline months
-    // still trail target on the chart. Surface that honestly.
-    const isMultiMonth = (result.simulated.points?.length ?? 0) > 1
-    const monthsCovered = isMultiMonth
-      ? " Per-month coverage is uneven — event-boosted months overshoot, quieter months may still undershoot. Read the chart for the per-month picture."
-      : ""
-    return `Running ${what} in ${monthsText} lifts volume by ${liftPct}% on top of the baseline forecast.${eventLine}${monthsCovered}`
+    // Surface per-month coverage honestly — same number the badge uses.
+    let coverageLine = ""
+    if (targetCoverage) {
+      const { above, total, worstShortLabel, worstShortHl } = targetCoverage
+      if (above === total) {
+        coverageLine = ` All ${total} month${total === 1 ? "" : "s"} clear target.`
+      } else if (above > 0) {
+        coverageLine = ` ${above} of ${total} months clear target`
+        if (worstShortLabel) {
+          coverageLine += ` — worst remaining: ${worstShortLabel}, still short ${formatHl(worstShortHl)}.`
+        } else {
+          coverageLine += "."
+        }
+      } else {
+        coverageLine = ` Action lifts the line but no month yet clears target — try a deeper discount or stack a brand push.`
+      }
+    }
+    return `Running ${what} in ${monthsText} lifts volume by ${liftPct}% on top of the baseline forecast.${eventLine}${coverageLine}`
   })()
 
   // Two layouts:
@@ -263,31 +307,29 @@ export function SimulatePanel({
             <h3 className="text-[13px] font-semibold text-neutral-900">
               Impact on the forecast
             </h3>
-            {resultHasPoints && result && (() => {
-              // Cumulative framing: 100%+ means total lift ≥ total gap
-              // across the SELECTED months. Doesn't mean every month
-              // individually reaches target — uneven baselines mean
-              // event-boosted months overshoot and quiet months still
-              // undershoot. Cap the display at 100% to avoid the
-              // misleading "101%" reading; over-shoot detail lives in
-              // the notes line under the chart.
-              const pct = result.gap_closed_pct
-              const display = Math.min(1, Math.max(-1, pct)) * 100
-              const isPositive = pct >= 0
-              const text = pct >= 1
-                ? "Cumulative gap fully covered"
-                : `Cumulative gap closure: ${display.toFixed(0)}%`
+            {targetCoverage && (() => {
+              // Per-month framing: directly maps to what the user sees
+              // on the chart — "for how many months does the green line
+              // end up above the dashed target line?". Much clearer
+              // than the cumulative-£ formulation which hid uneven
+              // per-month coverage behind a single average number.
+              const { above, total } = targetCoverage
+              const allClear = above === total
               return (
                 <div
                   className={[
                     "rounded-full px-2.5 py-0.5 text-[11.5px] font-medium tabular-nums",
-                    isPositive
+                    allClear
                       ? "bg-[var(--positive)]/10 text-[var(--positive)]"
-                      : "bg-[var(--negative)]/10 text-[var(--negative)]",
+                      : above === 0
+                        ? "bg-[var(--negative)]/10 text-[var(--negative)]"
+                        : "bg-neutral-100 text-neutral-700",
                   ].join(" ")}
-                  title="Total lift summed across the selected months ÷ total shortfall summed across those months. Individual months may still over- or under-shoot target."
+                  title="Counts months where the simulated line ends up at or above the dashed target line."
                 >
-                  {text}
+                  {allClear
+                    ? "Above target every month"
+                    : `Above target in ${above} of ${total} months`}
                 </div>
               )
             })()}
@@ -308,13 +350,18 @@ export function SimulatePanel({
               tone={liftedHl == null ? "neutral" : liftedHl >= 0 ? "positive" : "negative"}
             />
             <KpiInline
-              label="Still missing"
+              label="Above target"
               value={
-                resultHasPoints && result
-                  ? result.gap_after_hl >= 0
-                    ? "On track (cum.)"
-                    : formatHl(Math.abs(result.gap_after_hl))
+                targetCoverage
+                  ? targetCoverage.total === 0
+                    ? "—"
+                    : `${targetCoverage.above} of ${targetCoverage.total} mo`
                   : "—"
+              }
+              tone={
+                targetCoverage && targetCoverage.above === targetCoverage.total
+                  ? "positive"
+                  : "neutral"
               }
             />
             <KpiInline

@@ -1181,6 +1181,10 @@ export interface components {
         SimulationResult: {
             baseline: components["schemas"]["ForecastSeries"];
             simulated: components["schemas"]["ForecastSeries"];
+            /** Targets By Period */
+            targets_by_period?: {
+                [key: string]: number;
+            };
             /** Gap Before Hl */
             gap_before_hl: number;
             /** Gap After Hl */
