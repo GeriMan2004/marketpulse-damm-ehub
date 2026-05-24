@@ -206,7 +206,15 @@ export function SimulatePanel({
     const eventLine = result.event_boost_avg && result.event_boost_avg > 1.0
       ? ` Event boost of +${((result.event_boost_avg - 1) * 100).toFixed(0)}% applied (high-traffic month).`
       : ""
-    return `Running ${what} in ${monthsText} lifts volume by ${liftPct}% on top of the baseline forecast.${eventLine}`
+    // The cumulative-closure framing can mislead — if total lift sums
+    // to the total shortfall, the headline reads "fully covered" even
+    // though high-baseline months overshoot and low-baseline months
+    // still trail target on the chart. Surface that honestly.
+    const isMultiMonth = (result.simulated.points?.length ?? 0) > 1
+    const monthsCovered = isMultiMonth
+      ? " Per-month coverage is uneven — event-boosted months overshoot, quieter months may still undershoot. Read the chart for the per-month picture."
+      : ""
+    return `Running ${what} in ${monthsText} lifts volume by ${liftPct}% on top of the baseline forecast.${eventLine}${monthsCovered}`
   })()
 
   // Two layouts:
@@ -255,18 +263,34 @@ export function SimulatePanel({
             <h3 className="text-[13px] font-semibold text-neutral-900">
               Impact on the forecast
             </h3>
-            {resultHasPoints && result && (
-              <div
-                className={[
-                  "rounded-full px-2.5 py-0.5 text-[11.5px] font-medium tabular-nums",
-                  result.gap_closed_pct >= 0
-                    ? "bg-[var(--positive)]/10 text-[var(--positive)]"
-                    : "bg-[var(--negative)]/10 text-[var(--negative)]",
-                ].join(" ")}
-              >
-                Closes {(result.gap_closed_pct * 100).toFixed(0)}% of the gap
-              </div>
-            )}
+            {resultHasPoints && result && (() => {
+              // Cumulative framing: 100%+ means total lift ≥ total gap
+              // across the SELECTED months. Doesn't mean every month
+              // individually reaches target — uneven baselines mean
+              // event-boosted months overshoot and quiet months still
+              // undershoot. Cap the display at 100% to avoid the
+              // misleading "101%" reading; over-shoot detail lives in
+              // the notes line under the chart.
+              const pct = result.gap_closed_pct
+              const display = Math.min(1, Math.max(-1, pct)) * 100
+              const isPositive = pct >= 0
+              const text = pct >= 1
+                ? "Cumulative gap fully covered"
+                : `Cumulative gap closure: ${display.toFixed(0)}%`
+              return (
+                <div
+                  className={[
+                    "rounded-full px-2.5 py-0.5 text-[11.5px] font-medium tabular-nums",
+                    isPositive
+                      ? "bg-[var(--positive)]/10 text-[var(--positive)]"
+                      : "bg-[var(--negative)]/10 text-[var(--negative)]",
+                  ].join(" ")}
+                  title="Total lift summed across the selected months ÷ total shortfall summed across those months. Individual months may still over- or under-shoot target."
+                >
+                  {text}
+                </div>
+              )
+            })()}
           </div>
 
           {/* Inline KPI row — plain-English labels. Values stay blank until
@@ -288,7 +312,7 @@ export function SimulatePanel({
               value={
                 resultHasPoints && result
                   ? result.gap_after_hl >= 0
-                    ? "On target"
+                    ? "On track (cum.)"
                     : formatHl(Math.abs(result.gap_after_hl))
                   : "—"
               }
